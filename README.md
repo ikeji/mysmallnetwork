@@ -40,17 +40,16 @@ relay.ikeji.ma を既定で使う)。
 make            # または bin/ から msnw-exporter / msnw-client をコピー
 ```
 
-**2. リンクキーを 1 つ作り、両方の PC に控える**
+**2. リンクキーを決める**
 
-```
-msnw-client --gen-key
-# 例: 9xkQ2...(この値を両方で使う。これを知っている人だけが繋がれる)
-```
+両方の PC で同じ文字列を使う。以下では `mylonglongsecretkey` とする。
+これを知っている人だけが繋がれるので、推測されにくい長いものにする
+(`msnw-client --gen-key` でランダムに作ってもよい)。
 
 **3. 自宅 PC(sshd 側)で公開する**
 
 ```
-msnw-exporter -key <リンクキー> -n home -t 22
+msnw-exporter -key mylonglongsecretkey -n home -t 22
 ```
 
 `home` は好きな名前でよい。リンクキーが違えば他人の `home` とは衝突しない。
@@ -59,7 +58,7 @@ msnw-exporter -key <リンクキー> -n home -t 22
 **4. ノート PC から ssh する**
 
 ```
-ssh -o ProxyCommand='msnw-client -key <リンクキー> -n home' user@home
+ssh -o ProxyCommand='msnw-client -key mylonglongsecretkey -n home' user@home
 ```
 
 ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
@@ -68,18 +67,18 @@ ssh -o ProxyCommand='msnw-client -key <リンクキー> -n home' user@home
 ```
 Host home
     User user
-    ProxyCommand msnw-client -key <リンクキー> -n home
+    ProxyCommand msnw-client -key mylonglongsecretkey -n home
 ```
 
 キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
-`export MSNW_KEY=...` しておいて `-key` を省く。
+`export MSNW_KEY=mylonglongsecretkey` しておいて `-key` を省く。
 
 **別解: ローカルポートに出す**
 
 ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
 
 ```
-msnw-client -key <リンクキー> -n home -l 2222      # 起動したままにする
+msnw-client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
 ssh -p 2222 user@localhost                         # scp や rsync も同じ要領
 ```
 
