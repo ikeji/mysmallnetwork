@@ -30,7 +30,8 @@ roam: all
 	@if [ "$$(uname -s)" != Linux ] || ! command -v unshare >/dev/null || \
 	   ! { command -v nft >/dev/null || [ -x /usr/sbin/nft ]; }; then \
 		echo "roam: skipped (needs Linux, unshare and nft)"; exit 0; fi; \
-	test/natsim.sh cone -- test/roam.sh | grep -v 'reach the server\|server='
+	out=$$(test/natsim.sh cone -- test/roam.sh 2>&1); rc=$$?; \
+	echo "$$out" | grep -v 'reach the server\|server='; exit $$rc
 
 # Cross-compile for common targets into bin/<os>-<arch>/
 cross:

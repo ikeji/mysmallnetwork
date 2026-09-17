@@ -31,7 +31,10 @@ command -v "$NFT" >/dev/null || for c in /usr/sbin/nft /sbin/nft; do [ -x $c ] &
 if [ -z "${NATSIM_INNER:-}" ]; then
 	command -v "$NFT" >/dev/null || { echo "nft not found; apt install nftables or set NFT=" >&2; exit 1; }
 	[ -x "$ROOT/bin/msnw-server" ] || { echo "build first: make" >&2; exit 1; }
-	exec env NATSIM_INNER=1 unshare -Urnm "$0" "$@"
+	# Map to our own uid (not root) but keep capabilities, so programs that
+	# special-case uid 0 (sshd's privilege separation, for one) behave as for
+	# a normal user while we can still build interfaces and firewall rules.
+	exec env NATSIM_INNER=1 unshare -U --map-user="$(id -u)" --map-group="$(id -g)" --keep-caps -n -m "$0" "$@"
 fi
 shift || true
 [ "${1:-}" = "--" ] && shift

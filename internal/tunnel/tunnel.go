@@ -19,34 +19,39 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// Open sends a CONNECT for target on st and waits for the exporter's answer.
-// The returned reader must be used for subsequent reads (it may hold
-// buffered bytes).
-func Open(st *quic.Stream, target string) (*bufio.Reader, error) {
-	if _, err := fmt.Fprintf(st, "CONNECT %s\n", target); err != nil {
-		return nil, err
+// Open sends a request line on st and waits for the exporter's answer. The
+// returned reader must be used for subsequent reads (it may hold buffered
+// bytes). The answer line is returned without the leading "OK".
+func Open(st *quic.Stream, line string) (*bufio.Reader, string, error) {
+	if _, err := fmt.Fprintf(st, "%s\n", line); err != nil {
+		return nil, "", err
 	}
 	br := bufio.NewReader(st)
 	st.SetReadDeadline(time.Now().Add(15 * time.Second))
 	line, err := br.ReadString('\n')
 	st.SetReadDeadline(time.Time{})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	line = strings.TrimRight(line, "\r\n")
-	if line == "OK" {
-		return br, nil
+	if line == "OK" || strings.HasPrefix(line, "OK ") {
+		return br, strings.TrimSpace(strings.TrimPrefix(line, "OK")), nil
 	}
 	if strings.HasPrefix(line, "ERR ") {
-		return nil, errors.New(strings.TrimPrefix(line, "ERR "))
+		return nil, "", errors.New(strings.TrimPrefix(line, "ERR "))
 	}
-	return nil, fmt.Errorf("bad response %q", line)
+	return nil, "", fmt.Errorf("bad response %q", line)
 }
 
-// Request verbs.
+// Request verbs. Request lines are "<verb> <arguments>":
+//
+//	CONNECT <target|-> <token>   new resumable TCP session (see package resume)
+//	RESUME  <token> <received>   re-attach a session after a reconnect
+//	UDP     <target>             one UDP flow (see udp.go)
 const (
-	VerbConnect = "CONNECT" // one TCP connection on this stream
-	VerbUDP     = "UDP"     // one UDP flow (see udp.go)
+	VerbConnect = "CONNECT"
+	VerbResume  = "RESUME"
+	VerbUDP     = "UDP"
 )
 
 // Accept reads the request line from st and returns its verb and target.
@@ -59,10 +64,38 @@ func Accept(st *quic.Stream) (verb, target string, br *bufio.Reader, err error) 
 		return "", "", nil, err
 	}
 	verb, target, _ = strings.Cut(strings.TrimRight(line, "\r\n"), " ")
-	if verb != VerbConnect && verb != VerbUDP {
+	if verb != VerbConnect && verb != VerbUDP && verb != VerbResume {
 		return "", "", nil, fmt.Errorf("bad request %q", line)
 	}
 	return verb, strings.TrimSpace(target), br, nil
+}
+
+// PipeConns copies between two connections until both directions are done,
+// propagating half-closes with CloseWrite where supported.
+func PipeConns(a, b net.Conn) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		io.Copy(b, a)
+		closeWrite(b)
+	}()
+	go func() {
+		defer wg.Done()
+		io.Copy(a, b)
+		closeWrite(a)
+	}()
+	wg.Wait()
+	a.Close()
+	b.Close()
+}
+
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		cw.CloseWrite()
+	} else {
+		c.Close()
+	}
 }
 
 // Reject answers a CONNECT with an error.
@@ -101,16 +134,16 @@ func Pipe(st *quic.Stream, rd io.Reader, c net.Conn) {
 	st.CancelRead(0)
 }
 
-// PipeRW is Pipe for an arbitrary reader/writer pair (used for stdio mode).
-func PipeRW(st *quic.Stream, rd io.Reader, in io.Reader, out io.Writer) {
+// PipeRW connects c to a reader/writer pair (used for stdio mode).
+func PipeRW(c net.Conn, in io.Reader, out io.Writer) {
 	done := make(chan struct{}, 2)
 	go func() {
-		io.Copy(st, in)
-		st.Close()
+		io.Copy(c, in)
+		closeWrite(c)
 		done <- struct{}{}
 	}()
 	go func() {
-		io.Copy(out, rd)
+		io.Copy(out, c)
 		done <- struct{}{}
 	}()
 	// Finish when the peer side is done; if stdin closes first we still

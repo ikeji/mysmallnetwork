@@ -24,6 +24,7 @@ import (
 	"mysmallnetwork/internal/ident"
 	"mysmallnetwork/internal/netutil"
 	"mysmallnetwork/internal/peer"
+	"mysmallnetwork/internal/resume"
 	"mysmallnetwork/internal/socks5"
 	"mysmallnetwork/internal/tunnel"
 )
@@ -34,6 +35,7 @@ import (
 type pool struct {
 	node    *peer.Node
 	linkKey string
+	ctx     context.Context
 	mu      sync.Mutex
 	ents    map[string]*entry
 }
@@ -141,23 +143,79 @@ func (p *pool) watchNetwork(ctx context.Context) {
 	}
 }
 
-// open returns a stream to target on exporter name, already CONNECTed.
-func (p *pool) open(ctx context.Context, name, target string) (*quic.Stream, *tunnel.Reader, error) {
+// open returns a resumable session to target on exporter name. If the
+// tunnel is lost, the session reconnects on its own for up to resume.Grace.
+func (p *pool) open(ctx context.Context, name, target string) (*resume.Session, error) {
 	conn, _, err := p.get(ctx, name)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	st, err := conn.OpenStreamSync(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	rd, err := tunnel.Open(st, target)
+	if target == "" {
+		target = "-"
+	}
+	sess := resume.New(resume.NewToken())
+	rd, _, err := tunnel.Open(st, fmt.Sprintf("CONNECT %s %s", target, sess.Token))
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
-		return nil, nil, fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	return st, rd, nil
+	sess.OnDetach = func(s *resume.Session) { p.resumeSession(name, s) }
+	if err := sess.Attach(st, rd, 0); err != nil {
+		return nil, err
+	}
+	return sess, nil
+}
+
+// resumeSession re-attaches s over a (re)dialed connection, retrying until
+// resume.Grace has passed.
+func (p *pool) resumeSession(name string, s *resume.Session) {
+	deadline := time.Now().Add(resume.Grace)
+	backoff := 500 * time.Millisecond
+	for time.Now().Before(deadline) && !s.Closed() && p.ctx.Err() == nil {
+		if err := p.tryResume(name, s); err == nil {
+			log.Printf("session %s to %q resumed", s.Token[:8], name)
+			return
+		} else if p.node.Verbose {
+			log.Printf("resume %s: %v", s.Token[:8], err)
+		}
+		time.Sleep(backoff)
+		if backoff < 5*time.Second {
+			backoff *= 2
+		}
+	}
+	log.Printf("session %s to %q could not be resumed", s.Token[:8], name)
+	s.Close()
+}
+
+func (p *pool) tryResume(name string, s *resume.Session) error {
+	ctx, cancel := context.WithTimeout(p.ctx, 20*time.Second)
+	defer cancel()
+	conn, _, err := p.get(ctx, name)
+	if err != nil {
+		return err
+	}
+	st, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		return err
+	}
+	rd, reply, err := tunnel.Open(st, fmt.Sprintf("RESUME %s %d", s.Token, s.Recv()))
+	if err != nil {
+		st.CancelRead(0)
+		st.Close()
+		return err
+	}
+	peerRecv, err := strconv.ParseUint(reply, 10, 64)
+	if err != nil {
+		st.CancelRead(0)
+		st.Close()
+		return fmt.Errorf("bad resume reply %q", reply)
+	}
+	return s.Attach(st, rd, peerRecv)
 }
 
 // DefaultServer is the public rendezvous server used when -s / $MSNW_SERVER
@@ -205,10 +263,9 @@ func main() {
 	}
 	node.Verbose = *verbose
 	defer node.Close()
-	p := &pool{node: node, linkKey: *linkKey, ents: map[string]*entry{}}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	p := &pool{node: node, linkKey: *linkKey, ctx: ctx, ents: map[string]*entry{}}
 	go p.watchNetwork(ctx)
 
 	switch {
@@ -223,11 +280,11 @@ func main() {
 
 func runStdio(ctx context.Context, p *pool, spec string) {
 	name, target := netutil.SplitName(spec)
-	st, rd, err := p.open(ctx, name, target)
+	sess, err := p.open(ctx, name, target)
 	if err != nil {
 		log.Fatal(err)
 	}
-	tunnel.PipeRW(st, rd, os.Stdin, os.Stdout)
+	tunnel.PipeRW(sess, os.Stdin, os.Stdout)
 }
 
 func runListen(ctx context.Context, p *pool, spec, listen string) {
@@ -279,13 +336,13 @@ func runListen(ctx context.Context, p *pool, spec, listen string) {
 			return
 		}
 		go func() {
-			st, rd, err := p.open(ctx, name, target)
+			sess, err := p.open(ctx, name, target)
 			if err != nil {
 				log.Printf("%s: %v", c.RemoteAddr(), err)
 				c.Close()
 				return
 			}
-			tunnel.Pipe(st, rd, c)
+			tunnel.PipeConns(sess, c)
 		}()
 	}
 }
@@ -407,11 +464,7 @@ func runSocks(ctx context.Context, p *pool, listen, def string) {
 		}
 		dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		st, rd, err := p.open(dctx, name, target)
-		if err != nil {
-			return nil, err
-		}
-		return tunnel.NewConn(st, rd), nil
+		return p.open(dctx, name, target)
 	}
 	socks5.Serve(ctx, ln, dial, log.Printf)
 }

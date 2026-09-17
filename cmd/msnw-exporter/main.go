@@ -20,6 +20,7 @@ import (
 	"mysmallnetwork/internal/ident"
 	"mysmallnetwork/internal/peer"
 	"mysmallnetwork/internal/proto"
+	"mysmallnetwork/internal/resume"
 	"mysmallnetwork/internal/tunnel"
 )
 
@@ -140,7 +141,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	go acceptLoop(ctx, ln, pol, *linkKey, defaultPort)
+	sessions := resume.NewRegistry()
+	go sessions.Run(ctx)
+	go acceptLoop(ctx, ln, pol, *linkKey, defaultPort, sessions)
 
 	onIncoming := func(m *proto.Message) {
 		log.Printf("incoming client %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
@@ -166,7 +169,7 @@ func main() {
 	}
 }
 
-func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey string, defaultPort int) {
+func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey string, defaultPort int, sessions *resume.Registry) {
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
@@ -185,18 +188,34 @@ func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey str
 					log.Printf("peer %s closed: %v", conn.RemoteAddr(), err)
 					return
 				}
-				go serveStream(st, pol, mux)
+				go serveStream(st, pol, mux, sessions)
 			}
 		}()
 	}
 }
 
-func serveStream(st *quic.Stream, pol *policy, mux *tunnel.UDPMux) {
+func serveStream(st *quic.Stream, pol *policy, mux *tunnel.UDPMux, sessions *resume.Registry) {
 	verb, req, rd, err := tunnel.Accept(st)
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
 		return
+	}
+	if verb == tunnel.VerbResume {
+		serveResume(st, rd, req, sessions)
+		return
+	}
+	token := ""
+	if verb == tunnel.VerbConnect {
+		f := strings.Fields(req)
+		if len(f) != 2 {
+			tunnel.Reject(st, "bad CONNECT request")
+			return
+		}
+		req, token = f[0], f[1]
+		if req == "-" {
+			req = ""
+		}
 	}
 	target, err := pol.resolve(req)
 	if err != nil {
@@ -216,7 +235,37 @@ func serveStream(st *quic.Stream, pol *policy, mux *tunnel.UDPMux) {
 		c.Close()
 		return
 	}
-	tunnel.Pipe(st, rd, c)
+	sess := resume.New(token)
+	sessions.Add(sess)
+	if err := sess.Attach(st, rd, 0); err != nil {
+		c.Close()
+		return
+	}
+	tunnel.PipeConns(sess, c)
+	sessions.Remove(token)
+}
+
+// serveResume re-attaches an existing session: "RESUME <token> <received>".
+func serveResume(st *quic.Stream, rd *bufio.Reader, req string, sessions *resume.Registry) {
+	var token string
+	var peerRecv uint64
+	if _, err := fmt.Sscanf(req, "%s %d", &token, &peerRecv); err != nil {
+		tunnel.Reject(st, "bad RESUME request")
+		return
+	}
+	sess := sessions.Get(token)
+	if sess == nil || !sess.CanResume(peerRecv) {
+		tunnel.Reject(st, "no such session")
+		return
+	}
+	if _, err := fmt.Fprintf(st, "OK %d\n", sess.Recv()); err != nil {
+		return
+	}
+	if err := sess.Attach(st, rd, peerRecv); err != nil {
+		log.Printf("resume %s: %v", token[:8], err)
+		return
+	}
+	log.Printf("session %s resumed", token[:8])
 }
 
 // serveUDP relays one UDP flow to target until the client closes it or it
