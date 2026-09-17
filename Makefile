@@ -4,13 +4,13 @@ export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone
 
-.PHONY: all test unit natsim clean cross
+.PHONY: all test unit natsim roam clean cross
 
 all:
 	go build $(GOFLAGS) -o bin/ ./cmd/...
 	cp scripts/msnw-mosh bin/
 
-test: unit natsim
+test: unit natsim roam
 
 unit:
 	go vet ./... && go test ./...
@@ -24,6 +24,13 @@ natsim: all
 		out=$$(test/natsim.sh $$m 2>&1) || rc=1; \
 		echo "$$out" | grep -v 'reach the server\|server='; \
 	done; exit $$rc
+
+# Roaming: the client changes networks mid-session and must recover quickly.
+roam: all
+	@if [ "$$(uname -s)" != Linux ] || ! command -v unshare >/dev/null || \
+	   ! { command -v nft >/dev/null || [ -x /usr/sbin/nft ]; }; then \
+		echo "roam: skipped (needs Linux, unshare and nft)"; exit 0; fi; \
+	test/natsim.sh cone -- test/roam.sh | grep -v 'reach the server\|server='
 
 # Cross-compile for common targets into bin/<os>-<arch>/
 cross:

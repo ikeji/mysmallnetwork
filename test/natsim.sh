@@ -53,6 +53,9 @@ INPUT_RULE_TMPL='iifname "wan%s" ct state new drop'
 [ -n "${NATSIM_OPEN_INPUT:-}" ] && INPUT_RULE_TMPL=''
 
 ns() { ip netns exec "$@"; }
+# For background jobs: exec replaces the forked subshell so "kill $(jobs -p)"
+# reaches the command itself instead of an intermediate shell.
+nsbg() { exec ip netns exec "$@"; }
 
 ip link set lo up
 ip link add br0 type bridge
@@ -119,7 +122,7 @@ fi
 export MSNW_KEY=natsim-link MSNW_SERVER_KEY=natsim MSNW_SERVER=10.0.0.1:4433 QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
 LOG=${NATSIM_LOG:-$(mktemp -d)}
 "$ROOT/bin/msnw-server" -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$LOG/server.log" 2>&1 &
-ns siteA python3 -c '
+nsbg siteA python3 -c '
 import socket,threading
 s=socket.socket(); s.bind(("0.0.0.0",1234)); s.listen(5)
 while True:
@@ -128,7 +131,7 @@ while True:
 sleep 0.3
 PORT_A=0; [ "$MODE_A" = fullcone ] && PORT_A=$(port_for A)
 PORT_B=0; [ "$MODE_B" = fullcone ] && PORT_B=$(port_for B)
-ns siteA "$ROOT/bin/msnw-exporter" -v -n sitea -t 1234 -port $PORT_A >"$LOG/exporter.log" 2>&1 &
+nsbg siteA "$ROOT/bin/msnw-exporter" -v -n sitea -t 1234 -port $PORT_A >"$LOG/exporter.log" 2>&1 &
 sleep 1
 
 rc=0

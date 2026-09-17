@@ -88,8 +88,8 @@ func ctrlConfig() *quic.Config {
 
 func peerConfig() *quic.Config {
 	return &quic.Config{
-		MaxIdleTimeout:       60 * time.Second,
-		KeepAlivePeriod:      15 * time.Second,
+		MaxIdleTimeout:       30 * time.Second,
+		KeepAlivePeriod:      10 * time.Second,
 		HandshakeIdleTimeout: 6 * time.Second,
 		MaxIncomingStreams:   4096,
 		EnableDatagrams:      true,
@@ -202,6 +202,7 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {
+		n.DropControl()
 		return nil, fmt.Errorf("server: %w", err)
 	}
 	switch m.Type {

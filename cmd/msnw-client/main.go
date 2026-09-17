@@ -42,7 +42,8 @@ type entry struct {
 	mu          sync.Mutex
 	conn        *quic.Conn
 	defaultPort int
-	udp         *tunnel.UDPMux // lazily created for conn
+	udp         *tunnel.UDPMux // lazily created for udpConn
+	udpConn     *quic.Conn
 }
 
 func (p *pool) keyFor(name string) string { return p.linkKey }
@@ -92,10 +93,52 @@ func (p *pool) udpMux(ctx context.Context, name string) (*tunnel.UDPMux, error) 
 	p.mu.Unlock()
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.udp == nil || e.conn != conn {
+	if e.udp == nil || e.udpConn != conn {
 		e.udp = tunnel.NewUDPMux(conn)
+		e.udpConn = conn
 	}
 	return e.udp, nil
+}
+
+// dropAll closes every peer connection so the next use redials; called when
+// the local network changes (roaming) because the old paths are dead anyway.
+func (p *pool) dropAll(reason string) {
+	p.mu.Lock()
+	ents := make([]*entry, 0, len(p.ents))
+	for _, e := range p.ents {
+		ents = append(ents, e)
+	}
+	p.mu.Unlock()
+	for _, e := range ents {
+		e.mu.Lock()
+		if e.conn != nil && e.conn.Context().Err() == nil {
+			log.Printf("dropping connection: %s", reason)
+			e.conn.CloseWithError(0, reason)
+		}
+		e.mu.Unlock()
+	}
+	p.node.DropControl()
+}
+
+// watchNetwork polls the local address set and drops connections when it
+// changes, so roaming between networks recovers in seconds instead of
+// waiting for the idle timeout.
+func (p *pool) watchNetwork(ctx context.Context) {
+	last := strings.Join(netutil.LocalAddrs(0), ",")
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		cur := strings.Join(netutil.LocalAddrs(0), ",")
+		if cur != last {
+			last = cur
+			p.dropAll("local network changed")
+		}
+	}
 }
 
 // open returns a stream to target on exporter name, already CONNECTed.
@@ -166,6 +209,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go p.watchNetwork(ctx)
 
 	switch {
 	case *socks != "":
