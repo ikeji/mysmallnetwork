@@ -20,6 +20,7 @@
 
 ```
 make            # CGO_ENABLED=0 の静的バイナリを bin/ に生成
+make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
 make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
 ```
 
