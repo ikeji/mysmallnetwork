@@ -6,7 +6,10 @@ NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetr
 
 .PHONY: all test unit natsim roam clean cross
 
-all:
+all: bin/msnw
+
+# Real file target so "sudo make natsim" reuses a binary built as the user.
+bin/msnw: go.mod go.sum $(shell find cmd internal -name '*.go')
 	go build $(GOFLAGS) -o bin/ ./cmd/...
 
 test: unit natsim roam
@@ -15,7 +18,7 @@ unit:
 	go vet ./... && go test ./...
 
 # NAT traversal matrix in network namespaces (Linux, needs nft + unshare).
-natsim: all
+natsim: bin/msnw
 	@if [ "$$(uname -s)" != Linux ] || ! command -v unshare >/dev/null || \
 	   ! { command -v nft >/dev/null || [ -x /usr/sbin/nft ]; }; then \
 		echo "natsim: skipped (needs Linux, unshare and nft)"; exit 0; fi; \
@@ -25,7 +28,7 @@ natsim: all
 	done; exit $$rc
 
 # Roaming: the client changes networks mid-session and must recover quickly.
-roam: all
+roam: bin/msnw
 	@if [ "$$(uname -s)" != Linux ] || ! command -v unshare >/dev/null || \
 	   ! { command -v nft >/dev/null || [ -x /usr/sbin/nft ]; }; then \
 		echo "roam: skipped (needs Linux, unshare and nft)"; exit 0; fi; \
