@@ -22,7 +22,7 @@ while True:
     d,a=s.recvfrom(65535); s.sendto(d,a)
 ' >/dev/null 2>&1 &
 sleep 0.3
-nsbg siteA "$ROOT/bin/msnw" export -n sitea -t 21300 -t 21301 >"$L/exporter.log" 2>&1 &
+nsbg siteA "$ROOT/bin/msnw" export -n sitea -u 21300 -t 21301 >"$L/exporter.log" 2>&1 &
 sleep 1
 nsbg siteA python3 -c '
 import socket, threading

@@ -28,10 +28,11 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 
-// policy decides which targets clients may reach.
+// policy decides which targets clients may reach, per protocol.
 type policy struct {
-	targets []string // host:port
-	all     bool
+	tcp []string // host:port; the first is the default target
+	udp []string // host:port; the first is the default target
+	all bool     // any host:port, both protocols
 }
 
 func parseTarget(s string) (string, error) {
@@ -47,15 +48,21 @@ func parseTarget(s string) (string, error) {
 	return s, nil
 }
 
-func (p *policy) resolve(req string) (string, error) {
+// resolve maps a client's request ("" = default, "port", or "host:port") to
+// a target for proto ("tcp" or "udp").
+func (p *policy) resolve(proto, req string) (string, error) {
+	targets := p.tcp
+	if proto == "udp" {
+		targets = p.udp
+	}
 	if req == "" {
-		if len(p.targets) == 0 {
-			return "", fmt.Errorf("exporter has no default target")
+		if len(targets) == 0 {
+			return "", fmt.Errorf("exporter has no default %s target", proto)
 		}
-		return p.targets[0], nil
+		return targets[0], nil
 	}
 	if !strings.Contains(req, ":") { // port only
-		for _, t := range p.targets {
+		for _, t := range targets {
 			if _, port, _ := net.SplitHostPort(t); port == req {
 				return t, nil
 			}
@@ -63,9 +70,9 @@ func (p *policy) resolve(req string) (string, error) {
 		if p.all {
 			return "localhost:" + req, nil
 		}
-		return "", fmt.Errorf("port %s is not exported", req)
+		return "", fmt.Errorf("%s port %s is not exported", proto, req)
 	}
-	for _, t := range p.targets {
+	for _, t := range targets {
 		if t == req {
 			return t, nil
 		}
@@ -73,7 +80,7 @@ func (p *policy) resolve(req string) (string, error) {
 	if p.all {
 		return req, nil
 	}
-	return "", fmt.Errorf("target %s is not exported", req)
+	return "", fmt.Errorf("%s target %s is not exported", proto, req)
 }
 
 // Export publishes local services under a name.
@@ -81,9 +88,10 @@ func Export(args []string) {
 	fs := flag.NewFlagSet("msnw export", flag.ExitOnError)
 	quietQUIC()
 	name := fs.String("n", "", "name to export under (required)")
-	var targets multiFlag
-	fs.Var(&targets, "t", "target to export: port or host:port (repeatable; first is the default)")
-	all := fs.Bool("all", false, "let clients connect to any host:port through this exporter")
+	var tcpTargets, udpTargets multiFlag
+	fs.Var(&tcpTargets, "t", "TCP target to export: port or host:port (repeatable; first is the default)")
+	fs.Var(&udpTargets, "u", "UDP target to export: port or host:port (repeatable; first is the default)")
+	all := fs.Bool("all", false, "let clients connect to any host:port (TCP and UDP) through this exporter")
 	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
 	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
@@ -97,21 +105,28 @@ func Export(args []string) {
 		fmt.Println(ident.GenerateKey())
 		return
 	}
-	if *name == "" || *linkKey == "" || (len(targets) == 0 && !*all) {
-		fmt.Fprintln(os.Stderr, "usage: msnw export -n NAME -t [host:]port [-t ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
+	if *name == "" || *linkKey == "" || (len(tcpTargets) == 0 && len(udpTargets) == 0 && !*all) {
+		fmt.Fprintln(os.Stderr, "usage: msnw export -n NAME -t [host:]port [-t ...] [-u [host:]port ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
 		os.Exit(2)
 	}
 	pol := &policy{all: *all}
-	for _, t := range targets {
+	for _, t := range tcpTargets {
 		ht, err := parseTarget(t)
 		if err != nil {
 			log.Fatal(err)
 		}
-		pol.targets = append(pol.targets, ht)
+		pol.tcp = append(pol.tcp, ht)
+	}
+	for _, t := range udpTargets {
+		ht, err := parseTarget(t)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pol.udp = append(pol.udp, ht)
 	}
 	defaultPort := 0
-	if len(pol.targets) > 0 {
-		_, p, _ := net.SplitHostPort(pol.targets[0])
+	if len(pol.tcp) > 0 {
+		_, p, _ := net.SplitHostPort(pol.tcp[0])
 		defaultPort, _ = strconv.Atoi(p)
 	}
 
@@ -210,7 +225,11 @@ func serveStream(st *quic.Stream, pol *policy, mux *tunnel.UDPMux, sessions *res
 			req = ""
 		}
 	}
-	target, err := pol.resolve(req)
+	proto := "tcp"
+	if verb == tunnel.VerbUDP {
+		proto = "udp"
+	}
+	target, err := pol.resolve(proto, req)
 	if err != nil {
 		tunnel.Reject(st, err.Error())
 		return

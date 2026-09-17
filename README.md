@@ -112,13 +112,14 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 ### exporter
 
 ```
-msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 を hogehoge として公開
+msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 (TCP) を hogehoge として公開
 msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
+msnw export -n home -t 22 -u 60001                 # -t は TCP、-u は UDP(mosh 用)
 msnw export -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
 ```
 
-`-t` は `port`(= localhost:port)または `host:port`。`--all` は `-t` と併用でき、
-その場合 `-t` の先頭が既定ターゲットになる。
+`-t`(TCP)と `-u`(UDP)はそれぞれ `port`(= localhost:port)または `host:port`。
+`--all` は両プロトコルで任意の宛先を許し、`-t` と併用するとその先頭が既定ターゲットになる。
 
 ### client
 
@@ -158,7 +159,7 @@ ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
 例: mosh(`msnw mosh`)
 
 ```
-msnw export -key K -n home -t 22 -t 60001     # sshd を既定に、mosh 用 UDP ポートも許可
+msnw export -key K -n home -t 22 -u 60001     # sshd を既定に、mosh 用 UDP ポートも許可
 msnw mosh -key K user@home                      # -p で mosh のポートを変えられる(既定 60001)
 ```
 
