@@ -19,6 +19,8 @@ set -eu
 MODE=${1:-cone}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 NFT=${NFT:-nft}
+# nft lives in /usr/sbin, which is often not on an unprivileged user's PATH.
+command -v "$NFT" >/dev/null || for c in /usr/sbin/nft /sbin/nft; do [ -x $c ] && NFT=$c && break; done
 
 if [ -z "${NATSIM_INNER:-}" ]; then
 	command -v "$NFT" >/dev/null || { echo "nft not found; apt install nftables or set NFT=" >&2; exit 1; }
