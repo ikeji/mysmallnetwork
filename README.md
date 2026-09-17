@@ -49,10 +49,11 @@ make            # bin/msnw を両方の PC に置く。PATH を通す必要は�
 **3. 自宅 PC(sshd 側)で公開する**
 
 ```
-msnw export -key mylonglongsecretkey -n home -t 22 -u 60001
+msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
 ```
 
-`-t 22` が sshd、`-u 60001` が mosh 用の UDP ポート(ssh だけなら `-u` は不要)。
+`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲(ssh だけなら `-u` は不要)。
+範囲にしておくと mosh セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
 `home` は好きな名前でよく、リンクキーが違えば他人の `home` とは衝突しない。
 ログに `registered "home"` と出れば準備完了。起動したままにしておく。
 
@@ -65,7 +66,7 @@ msnw mosh -key mylonglongsecretkey user@home
 これだけでよい。内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を
 起動し、mosh の UDP をトンネルで転送して `mosh-client` を起動する。
 ノート PC には `ssh` と `mosh-client` が、自宅 PC には `mosh-server` が要る。
-ポートを変えるなら `-p 60002` のように指定し、exporter 側の `-u` も合わせる。
+ポート範囲を変えるなら `-p 60001:60010` のように指定し、exporter 側の `-u` も合わせる。
 
 **4b. ノート PC から ssh する**
 
@@ -130,11 +131,12 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 ```
 msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 (TCP) を hogehoge として公開
 msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
-msnw export -n home -t 22 -u 60001                 # -t は TCP、-u は UDP(mosh 用)
+msnw export -n home -t 22 -u 60001-60999           # -t は TCP、-u は UDP。範囲も書ける(mosh 用)
 msnw export -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
 ```
 
-`-t`(TCP)と `-u`(UDP)はそれぞれ `port`(= localhost:port)または `host:port`。
+`-t`(TCP)と `-u`(UDP)はそれぞれ `port`(= localhost:port)、`host:port`、または
+`lo-hi` / `host:lo-hi` のポート範囲。
 `--all` は両プロトコルで任意の宛先を許し、`-t` と併用するとその先頭が既定ターゲットになる。
 
 ### client
@@ -175,8 +177,8 @@ ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
 例: mosh(`msnw mosh`)
 
 ```
-msnw export -key K -n home -t 22 -u 60001     # sshd を既定に、mosh 用 UDP ポートも許可
-msnw mosh -key K user@home                      # -p で mosh のポートを変えられる(既定 60001)
+msnw export -key K -n home -t 22 -u 60001-60999   # sshd を既定に、mosh 用 UDP ポート範囲も許可
+msnw mosh -key K user@home                      # -p で mosh のポート範囲を変えられる(既定 60001:60999)
 ```
 
 `msnw mosh` は ssh(ProxyCommand に自分自身のパスを渡す)で `mosh-server` を

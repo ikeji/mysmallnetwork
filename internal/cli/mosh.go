@@ -17,15 +17,15 @@ import (
 // mosh-server over ssh (with this binary as the ProxyCommand), forwards the
 // mosh UDP port through the tunnel in-process, and runs mosh-client against
 // 127.0.0.1. The exporter must publish sshd as its default target and allow
-// the mosh UDP port, e.g. "msnw export -key K -n home -t 22 -u 60001".
+// the mosh UDP ports, e.g. "msnw export -key K -n home -t 22 -u 60001-60999".
 func Mosh(args []string) {
 	fs := flag.NewFlagSet("msnw mosh", flag.ExitOnError)
-	port := fs.Int("p", 60001, "UDP port for mosh-server (the exporter must allow it with -u)")
+	ports := fs.String("p", "60001:60999", "UDP port or range LO:HI for mosh-server (the exporter must allow it with -u)")
 	sshOpts := fs.String("ssh", os.Getenv("MSNW_MOSH_SSH"), "extra options for the bootstrap ssh (or $MSNW_MOSH_SSH)")
 	nf := addNodeFlags(fs)
 	fs.Parse(args)
 	if fs.NArg() != 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT] [user@]NAME")
+		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [user@]NAME")
 		os.Exit(2)
 	}
 	dest := fs.Arg(0)
@@ -50,7 +50,7 @@ func Mosh(args []string) {
 	sshArgs := []string{"-o", proxy}
 	sshArgs = append(sshArgs, strings.Fields(*sshOpts)...)
 	sshArgs = append(sshArgs, dest, "--", "mosh-server", "new", "-i", "127.0.0.1",
-		"-p", strconv.Itoa(*port), "-c", "256", "-l", "LANG="+lang)
+		"-p", *ports, "-c", "256", "-l", "LANG="+lang)
 	ssh := exec.Command("ssh", sshArgs...)
 	ssh.Stderr = os.Stderr
 	out, err := ssh.Output()

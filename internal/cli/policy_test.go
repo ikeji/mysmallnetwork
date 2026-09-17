@@ -3,7 +3,18 @@ package cli
 import "testing"
 
 func TestPolicyResolve(t *testing.T) {
-	p := &policy{tcp: []string{"localhost:1234", "10.0.0.5:80"}, udp: []string{"localhost:60001"}}
+	mk := func(specs ...string) []target {
+		var out []target
+		for _, sp := range specs {
+			tg, err := parseTarget(sp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, tg)
+		}
+		return out
+	}
+	p := &policy{tcp: mk("1234", "10.0.0.5:80"), udp: mk("60001-60010")}
 	cases := []struct {
 		proto, req, want string
 		all, ok          bool
@@ -18,8 +29,10 @@ func TestPolicyResolve(t *testing.T) {
 		{"tcp", "example.com:443", "example.com:443", true, true},
 		{"udp", "", "localhost:60001", false, true},
 		{"udp", "60001", "localhost:60001", false, true},
-		{"udp", "1234", "", false, false},  // a TCP-only port is not a UDP target
-		{"tcp", "60001", "", false, false}, // and vice versa
+		{"udp", "60010", "localhost:60010", false, true}, // inside the range
+		{"udp", "60011", "", false, false},               // just outside
+		{"udp", "1234", "", false, false},                // a TCP-only port is not a UDP target
+		{"tcp", "60001", "", false, false},               // and vice versa
 		{"udp", "5353", "localhost:5353", true, true},
 	}
 	for _, c := range cases {
@@ -31,5 +44,10 @@ func TestPolicyResolve(t *testing.T) {
 	}
 	if _, err := (&policy{all: true}).resolve("tcp", ""); err == nil {
 		t.Error("expected error: no default target")
+	}
+	for _, bad := range []string{"", "x", "70000", "10-5", ":22", "0"} {
+		if _, err := parseTarget(bad); err == nil {
+			t.Errorf("parseTarget(%q) should fail", bad)
+		}
 	}
 }

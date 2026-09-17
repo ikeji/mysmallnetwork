@@ -30,26 +30,43 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 
 // policy decides which targets clients may reach, per protocol.
 type policy struct {
-	tcp []string // host:port; the first is the default target
-	udp []string // host:port; the first is the default target
+	tcp []target // the first is the default target
+	udp []target // the first is the default target
 	all bool     // any host:port, both protocols
 }
 
-func parseTarget(s string) (string, error) {
-	if !strings.Contains(s, ":") {
-		if _, err := strconv.Atoi(s); err != nil {
-			return "", fmt.Errorf("bad target %q (want port or host:port)", s)
-		}
-		return "localhost:" + s, nil
+// target is "[host:]port" or "[host:]lo-hi" (a port range).
+type target struct {
+	host   string
+	lo, hi int
+}
+
+func (t target) String() string { return net.JoinHostPort(t.host, strconv.Itoa(t.lo)) }
+
+func (t target) contains(host string, port int) bool {
+	return t.host == host && port >= t.lo && port <= t.hi
+}
+
+func parseTarget(s string) (target, error) {
+	host, ports := "localhost", s
+	if i := strings.LastIndex(s, ":"); i >= 0 {
+		host, ports = s[:i], s[i+1:]
+		host = strings.Trim(host, "[]") // IPv6 literal
 	}
-	if _, _, err := net.SplitHostPort(s); err != nil {
-		return "", fmt.Errorf("bad target %q: %v", s, err)
+	lo, hi, ok := strings.Cut(ports, "-")
+	if !ok {
+		hi = lo
 	}
-	return s, nil
+	l, err1 := strconv.Atoi(lo)
+	h, err2 := strconv.Atoi(hi)
+	if host == "" || err1 != nil || err2 != nil || l < 1 || h > 65535 || l > h {
+		return target{}, fmt.Errorf("bad target %q (want [host:]port or [host:]lo-hi)", s)
+	}
+	return target{host: host, lo: l, hi: h}, nil
 }
 
 // resolve maps a client's request ("" = default, "port", or "host:port") to
-// a target for proto ("tcp" or "udp").
+// a "host:port" for proto ("tcp" or "udp").
 func (p *policy) resolve(proto, req string) (string, error) {
 	targets := p.tcp
 	if proto == "udp" {
@@ -59,28 +76,33 @@ func (p *policy) resolve(proto, req string) (string, error) {
 		if len(targets) == 0 {
 			return "", fmt.Errorf("exporter has no default %s target", proto)
 		}
-		return targets[0], nil
+		return targets[0].String(), nil
 	}
-	if !strings.Contains(req, ":") { // port only
+	host, ports := "", req
+	if i := strings.LastIndex(req, ":"); i >= 0 {
+		host, ports = strings.Trim(req[:i], "[]"), req[i+1:]
+	}
+	port, err := strconv.Atoi(ports)
+	if err != nil {
+		return "", fmt.Errorf("bad target %q", req)
+	}
+	if host == "" { // port only: any exported target with that port, else localhost
 		for _, t := range targets {
-			if _, port, _ := net.SplitHostPort(t); port == req {
-				return t, nil
+			if t.contains(t.host, port) {
+				return net.JoinHostPort(t.host, ports), nil
 			}
 		}
-		if p.all {
-			return "localhost:" + req, nil
-		}
-		return "", fmt.Errorf("%s port %s is not exported", proto, req)
+		host = "localhost"
 	}
 	for _, t := range targets {
-		if t == req {
-			return t, nil
+		if t.contains(host, port) {
+			return net.JoinHostPort(host, ports), nil
 		}
 	}
 	if p.all {
-		return req, nil
+		return net.JoinHostPort(host, ports), nil
 	}
-	return "", fmt.Errorf("%s target %s is not exported", proto, req)
+	return "", fmt.Errorf("%s target %s is not exported", proto, net.JoinHostPort(host, ports))
 }
 
 // Export publishes local services under a name.
@@ -89,8 +111,8 @@ func Export(args []string) {
 	quietQUIC()
 	name := fs.String("n", "", "name to export under (required)")
 	var tcpTargets, udpTargets multiFlag
-	fs.Var(&tcpTargets, "t", "TCP target to export: port or host:port (repeatable; first is the default)")
-	fs.Var(&udpTargets, "u", "UDP target to export: port or host:port (repeatable; first is the default)")
+	fs.Var(&tcpTargets, "t", "TCP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
+	fs.Var(&udpTargets, "u", "UDP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
 	all := fs.Bool("all", false, "let clients connect to any host:port (TCP and UDP) through this exporter")
 	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
@@ -126,8 +148,7 @@ func Export(args []string) {
 	}
 	defaultPort := 0
 	if len(pol.tcp) > 0 {
-		_, p, _ := net.SplitHostPort(pol.tcp[0])
-		defaultPort, _ = strconv.Atoi(p)
+		defaultPort = pol.tcp[0].lo
 	}
 
 	id, err := ident.New()
