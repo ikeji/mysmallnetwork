@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
@@ -127,7 +128,7 @@ func verifyPinned(allowed func(fp string) bool) func([][]byte, [][]*x509.Certifi
 
 // ClientConfig returns a TLS config for dialing a peer. If expectedFP is
 // empty the peer certificate is not verified (only for the rendezvous server
-// when no pin is configured; the shared secret still authenticates us and the
+// when no pin is configured; the server key still authenticates us and the
 // server's answer is trusted at the user's discretion).
 func (id *Identity) ClientConfig(expectedFP string) *tls.Config {
 	conf := &tls.Config{
@@ -159,25 +160,52 @@ func (id *Identity) ServerConfig(allow func(fp string) bool) *tls.Config {
 	return conf
 }
 
-// AuthTag computes the shared-secret proof bound to a TLS session, so that it
-// cannot be replayed on another connection.
-func AuthTag(secret string, cs tls.ConnectionState) (string, error) {
-	ekm, err := cs.ExportKeyingMaterial("msnw-auth", nil, 32)
+// AuthTag proves possession of a shared key, bound to one TLS session (via
+// exported keying material under label) so it cannot be replayed or relayed
+// onto another connection.
+func AuthTag(key, label string, cs tls.ConnectionState) (string, error) {
+	ekm, err := cs.ExportKeyingMaterial(label, nil, 32)
 	if err != nil {
 		return "", err
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
+	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write(ekm)
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
 // AuthOK verifies a tag produced by AuthTag.
-func AuthOK(secret, tag string, cs tls.ConnectionState) bool {
-	want, err := AuthTag(secret, cs)
+func AuthOK(key, label, tag string, cs tls.ConnectionState) bool {
+	want, err := AuthTag(key, label, cs)
 	if err != nil {
 		return false
 	}
 	return hmac.Equal([]byte(want), []byte(tag))
+}
+
+// Labels for AuthTag. Each direction uses its own so a proof can never be
+// reflected back to its author.
+const (
+	LabelServer   = "msnw-auth"          // node -> rendezvous server (server key)
+	LabelClient   = "msnw-peer-client"   // client -> exporter (link key)
+	LabelExporter = "msnw-peer-exporter" // exporter -> client (link key)
+)
+
+// HashName maps a human-readable exporter name into the namespace of a link
+// key. The server only ever sees this value, so different keys never collide
+// and the server learns neither the key nor the name.
+func HashName(key, name string) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("msnw-name:" + name))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// GenerateKey returns a fresh random link key (base64url, 32 bytes of entropy).
+func GenerateKey() string {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
 // AllowList is a concurrency-safe set of fingerprints with expiry, used by

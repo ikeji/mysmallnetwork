@@ -86,14 +86,20 @@ func main() {
 	flag.Var(&targets, "t", "target to export: port or host:port (repeatable; first is the default)")
 	all := flag.Bool("all", false, "let clients connect to any host:port through this exporter")
 	server := flag.String("s", envOr("MSNW_SERVER", "localhost:4433"), "rendezvous server host:port (or $MSNW_SERVER)")
-	secret := flag.String("secret", os.Getenv("MSNW_SECRET"), "shared secret (or $MSNW_SECRET)")
+	linkKey := flag.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
+	serverKey := flag.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := flag.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	port := flag.Int("port", 0, "local UDP port to bind (0 = random)")
+	genKey := flag.Bool("gen-key", false, "print a fresh random link key and exit")
 	verbose := flag.Bool("v", false, "verbose logging")
 	flag.Parse()
 
-	if *name == "" || *secret == "" || (len(targets) == 0 && !*all) {
-		fmt.Fprintln(os.Stderr, "usage: msnw-exporter -n NAME -t [host:]port [-t ...] [--all] [-s server:port] -secret S")
+	if *genKey {
+		fmt.Println(ident.GenerateKey())
+		return
+	}
+	if *name == "" || *linkKey == "" || (len(targets) == 0 && !*all) {
+		fmt.Fprintln(os.Stderr, "usage: msnw-exporter -n NAME -t [host:]port [-t ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
 		os.Exit(2)
 	}
 	pol := &policy{all: *all}
@@ -114,7 +120,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	node, err := peer.New(id, *server, *secret, *serverFP, *port)
+	node, err := peer.New(id, *server, *serverKey, *serverFP, *port)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -129,7 +135,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	go acceptLoop(ctx, ln, pol)
+	go acceptLoop(ctx, ln, pol, *linkKey, defaultPort)
 
 	onIncoming := func(m *proto.Message) {
 		log.Printf("incoming client %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
@@ -140,7 +146,7 @@ func main() {
 
 	backoff := time.Second
 	for ctx.Err() == nil {
-		err := node.Register(ctx, *name, defaultPort, onIncoming)
+		err := node.Register(ctx, *linkKey, *name, onIncoming)
 		if ctx.Err() != nil {
 			break
 		}
@@ -155,14 +161,18 @@ func main() {
 	}
 }
 
-func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy) {
+func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey string, defaultPort int) {
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
 			return
 		}
-		log.Printf("peer connected from %s", conn.RemoteAddr())
 		go func() {
+			if err := peer.AuthenticateAsExporter(ctx, conn, linkKey, defaultPort); err != nil {
+				log.Printf("peer %s rejected: %v", conn.RemoteAddr(), err)
+				return
+			}
+			log.Printf("peer connected from %s", conn.RemoteAddr())
 			for {
 				st, err := conn.AcceptStream(ctx)
 				if err != nil {

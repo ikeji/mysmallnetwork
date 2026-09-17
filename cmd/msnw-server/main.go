@@ -22,12 +22,11 @@ func main() {
 	}
 	listen := flag.String("listen", ":4433", "control listen address (UDP/QUIC)")
 	relay := flag.String("relay", ":4434", "relay listen address (UDP); must be reachable by nodes")
-	secret := flag.String("secret", os.Getenv("MSNW_SECRET"), "shared secret (or $MSNW_SECRET)")
+	serverKey := flag.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key nodes must present (or $MSNW_SERVER_KEY); empty = open server")
 	key := flag.String("key", "", "path to persistent private key (created if missing); default: ephemeral")
 	flag.Parse()
-	if *secret == "" {
-		fmt.Fprintln(os.Stderr, "msnw-server: -secret (or $MSNW_SECRET) is required")
-		os.Exit(2)
+	if *serverKey == "" {
+		fmt.Fprintln(os.Stderr, "msnw-server: no -server-key set; anyone can use this server")
 	}
 	var id *ident.Identity
 	var err error
@@ -41,7 +40,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	srv := &rendezvous.Server{Ident: id, Secret: *secret}
+	srv := &rendezvous.Server{Ident: id, ServerKey: *serverKey}
 	if err := srv.Run(ctx, *listen, *relay); err != nil {
 		log.Fatal(err)
 	}

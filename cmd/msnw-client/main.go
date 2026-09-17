@@ -28,20 +28,27 @@ import (
 	"mysmallnetwork/internal/tunnel"
 )
 
-// pool keeps one peer connection per exporter name and redials on failure.
+// pool keeps one authenticated peer connection per exporter name and redials
+// on failure. The link key is looked up per name so that several keys (with
+// priorities) can be supported later without changing callers.
 type pool struct {
-	node *peer.Node
-	mu   sync.Mutex
-	ents map[string]*entry
+	node    *peer.Node
+	linkKey string
+	mu      sync.Mutex
+	ents    map[string]*entry
 }
 
 type entry struct {
-	mu   sync.Mutex
-	conn *quic.Conn
-	info *peer.PeerInfo
+	mu          sync.Mutex
+	conn        *quic.Conn
+	defaultPort int
 }
 
-func (p *pool) get(ctx context.Context, name string) (*quic.Conn, *peer.PeerInfo, error) {
+func (p *pool) keyFor(name string) string { return p.linkKey }
+
+// get returns a live, link-key-authenticated connection to exporter name and
+// the exporter's default target port.
+func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	p.mu.Lock()
 	e := p.ents[name]
 	if e == nil {
@@ -53,19 +60,24 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, *peer.PeerInfo
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.conn != nil && e.conn.Context().Err() == nil {
-		return e.conn, e.info, nil
+		return e.conn, e.defaultPort, nil
 	}
-	info, err := p.node.Lookup(ctx, name)
+	key := p.keyFor(name)
+	info, err := p.node.Lookup(ctx, key, name)
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, err
 	}
 	conn, via, err := p.node.DialPeer(ctx, info)
 	if err != nil {
-		return nil, nil, err
+		return nil, 0, err
+	}
+	port, err := peer.AuthenticateAsClient(ctx, conn, key)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%s: %w", name, err)
 	}
 	log.Printf("connected to %q via %s", name, via)
-	e.conn, e.info = conn, info
-	return conn, info, nil
+	e.conn, e.defaultPort = conn, port
+	return conn, port, nil
 }
 
 // open returns a stream to target on exporter name, already CONNECTed.
@@ -100,14 +112,20 @@ func main() {
 	listen := fs.String("l", "", "listen locally (port, :port or host:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
 	server := fs.String("s", envOr("MSNW_SERVER", "localhost:4433"), "rendezvous server host:port (or $MSNW_SERVER)")
-	secret := fs.String("secret", os.Getenv("MSNW_SECRET"), "shared secret (or $MSNW_SECRET)")
+	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required")
+	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
+	genKey := fs.Bool("gen-key", false, "print a fresh random link key and exit")
 	verbose := fs.Bool("v", false, "verbose logging")
 	fs.Parse(args)
 
-	if *secret == "" || (*name == "" && *socks == "") {
-		fmt.Fprintln(os.Stderr, "usage: msnw-client -n NAME[:port] [-l [addr]] | --socks5 [addr] [-n NAME]   (-s server, -secret S)")
+	if *genKey {
+		fmt.Println(ident.GenerateKey())
+		return
+	}
+	if *linkKey == "" || (*name == "" && *socks == "") {
+		fmt.Fprintln(os.Stderr, "usage: msnw-client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] [-n NAME]   (-s server, -server-key K)")
 		os.Exit(2)
 	}
 	log.SetOutput(os.Stderr)
@@ -116,13 +134,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	node, err := peer.New(id, *server, *secret, *serverFP, *port)
+	node, err := peer.New(id, *server, *serverKey, *serverFP, *port)
 	if err != nil {
 		log.Fatal(err)
 	}
 	node.Verbose = *verbose
 	defer node.Close()
-	p := &pool{node: node, ents: map[string]*entry{}}
+	p := &pool{node: node, linkKey: *linkKey, ents: map[string]*entry{}}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -149,12 +167,12 @@ func runStdio(ctx context.Context, p *pool, spec string) {
 func runListen(ctx context.Context, p *pool, spec, listen string) {
 	name, target := netutil.SplitName(spec)
 	// Connect eagerly: it validates the name and tells us the default port.
-	_, info, err := p.get(ctx, name)
+	_, defaultPort, err := p.get(ctx, name)
 	if err != nil {
 		log.Fatal(err)
 	}
 	if listen == "auto" {
-		port := info.DefaultPort
+		port := defaultPort
 		if target != "" {
 			_, ps, err := net.SplitHostPort(target)
 			if err != nil {

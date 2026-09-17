@@ -5,6 +5,7 @@
 package peer
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -27,7 +28,7 @@ type Node struct {
 	Transport *quic.Transport
 	Server    *net.UDPAddr
 	ServerFP  string
-	Secret    string
+	ServerKey string // optional gate for the rendezvous server
 	Verbose   bool
 
 	mu   sync.Mutex
@@ -41,11 +42,10 @@ type PeerInfo struct {
 	Fingerprint string
 	Candidates  []string
 	Relay       *net.UDPAddr
-	DefaultPort int
 }
 
 // New resolves the server address and binds the shared UDP socket.
-func New(id *ident.Identity, server, secret, serverFP string, port int) (*Node, error) {
+func New(id *ident.Identity, server, serverKey, serverFP string, port int) (*Node, error) {
 	sa, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		return nil, fmt.Errorf("server address: %w", err)
@@ -59,7 +59,7 @@ func New(id *ident.Identity, server, secret, serverFP string, port int) (*Node, 
 		Transport: &quic.Transport{Conn: uc},
 		Server:    sa,
 		ServerFP:  serverFP,
-		Secret:    secret,
+		ServerKey: serverKey,
 	}, nil
 }
 
@@ -121,7 +121,7 @@ func (n *Node) DropControl() {
 }
 
 func (n *Node) authFor(conn *quic.Conn) (string, error) {
-	return ident.AuthTag(n.Secret, conn.ConnectionState().TLS)
+	return ident.AuthTag(n.ServerKey, ident.LabelServer, conn.ConnectionState().TLS)
 }
 
 // RelayAddr builds the relay address from the server host and the port the
@@ -171,8 +171,9 @@ func (n *Node) RelayHello(ctx context.Context, relay *net.UDPAddr, session strin
 
 // ---- client side -----------------------------------------------------------
 
-// Lookup asks the server how to reach exporter name.
-func (n *Node) Lookup(ctx context.Context, name string) (*PeerInfo, error) {
+// Lookup asks the server how to reach exporter name within the namespace of
+// linkKey. The server only sees HashName(linkKey, name).
+func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, error) {
 	ctrl, err := n.Control(ctx)
 	if err != nil {
 		return nil, err
@@ -189,7 +190,7 @@ func (n *Node) Lookup(ctx context.Context, name string) (*PeerInfo, error) {
 	defer st.Close()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeConnect,
-		Name:        name,
+		Name:        ident.HashName(linkKey, name),
 		Auth:        auth,
 		Fingerprint: n.Ident.Fingerprint,
 		LocalAddrs:  n.LocalCandidates(),
@@ -210,7 +211,6 @@ func (n *Node) Lookup(ctx context.Context, name string) (*PeerInfo, error) {
 			Fingerprint: m.PeerFingerprint,
 			Candidates:  m.Candidates,
 			Relay:       n.RelayAddr(m.RelayPort),
-			DefaultPort: m.DefaultPort,
 		}, nil
 	case proto.TypeError:
 		return nil, errors.New(m.Error)
@@ -340,9 +340,10 @@ func (n *Node) learnFromPunches(ctx context.Context, session string, found func(
 
 // ---- exporter side ---------------------------------------------------------
 
-// Register announces name to the server and blocks, invoking onIncoming for
-// every client introduction, until the control stream breaks.
-func (n *Node) Register(ctx context.Context, name string, defaultPort int, onIncoming func(*proto.Message)) error {
+// Register announces HashName(linkKey, name) to the server and blocks,
+// invoking onIncoming for every client introduction, until the control
+// stream breaks.
+func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming func(*proto.Message)) error {
 	ctrl, err := n.Control(ctx)
 	if err != nil {
 		return err
@@ -359,11 +360,10 @@ func (n *Node) Register(ctx context.Context, name string, defaultPort int, onInc
 	defer st.Close()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeRegister,
-		Name:        name,
+		Name:        ident.HashName(linkKey, name),
 		Auth:        auth,
 		Fingerprint: n.Ident.Fingerprint,
 		LocalAddrs:  n.LocalCandidates(),
-		DefaultPort: defaultPort,
 	})
 	if err != nil {
 		return err
@@ -414,4 +414,85 @@ func (n *Node) Register(ctx context.Context, name string, defaultPort int, onInc
 // admits.
 func (n *Node) Listen(allow func(fp string) bool) (*quic.Listener, error) {
 	return n.Transport.Listen(n.Ident.ServerConfig(allow), peerConfig())
+}
+
+// ---- peer authentication (link key) ----------------------------------------
+
+const authTimeout = 10 * time.Second
+
+// AuthenticateAsClient runs the link-key handshake on a freshly dialed peer
+// connection and returns the exporter's default target port. On failure the
+// connection is closed.
+func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) (int, error) {
+	fail := func(err error) (int, error) {
+		conn.CloseWithError(1, "authentication failed")
+		return 0, err
+	}
+	cs := conn.ConnectionState().TLS
+	mine, err := ident.AuthTag(linkKey, ident.LabelClient, cs)
+	if err != nil {
+		return fail(err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, authTimeout)
+	defer cancel()
+	st, err := conn.OpenStreamSync(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	defer st.Close()
+	st.SetDeadline(time.Now().Add(authTimeout))
+	if _, err := fmt.Fprintf(st, "AUTH %s\n", mine); err != nil {
+		return fail(err)
+	}
+	line, err := bufio.NewReader(st).ReadString('\n')
+	if err != nil {
+		return fail(fmt.Errorf("exporter did not answer authentication: %w", err))
+	}
+	var theirs string
+	var port int
+	if _, err := fmt.Sscanf(line, "AUTH %s %d", &theirs, &port); err != nil {
+		return fail(errors.New("exporter rejected the link key"))
+	}
+	if !ident.AuthOK(linkKey, ident.LabelExporter, theirs, cs) {
+		return fail(errors.New("exporter has a different link key"))
+	}
+	return port, nil
+}
+
+// AuthenticateAsExporter accepts the first stream of a peer connection and
+// verifies the client's link-key proof before answering with our own. The
+// connection is closed on any failure.
+func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string, defaultPort int) error {
+	fail := func(err error) error {
+		conn.CloseWithError(1, "authentication failed")
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, authTimeout)
+	defer cancel()
+	st, err := conn.AcceptStream(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	defer st.Close()
+	st.SetDeadline(time.Now().Add(authTimeout))
+	line, err := bufio.NewReader(st).ReadString('\n')
+	if err != nil {
+		return fail(err)
+	}
+	var theirs string
+	if _, err := fmt.Sscanf(line, "AUTH %s", &theirs); err != nil {
+		return fail(errors.New("client did not authenticate"))
+	}
+	cs := conn.ConnectionState().TLS
+	if !ident.AuthOK(linkKey, ident.LabelClient, theirs, cs) {
+		return fail(errors.New("client has a different link key"))
+	}
+	mine, err := ident.AuthTag(linkKey, ident.LabelExporter, cs)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := fmt.Fprintf(st, "AUTH %s %d\n", mine, defaultPort); err != nil {
+		return fail(err)
+	}
+	return nil
 }

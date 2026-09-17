@@ -116,9 +116,9 @@ if [ $# -gt 0 ]; then
 fi
 
 # ---- built-in smoke test ----------------------------------------------------
-export MSNW_SECRET=natsim MSNW_SERVER=10.0.0.1:4433 QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
+export MSNW_KEY=natsim-link MSNW_SERVER_KEY=natsim MSNW_SERVER=10.0.0.1:4433 QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
 LOG=${NATSIM_LOG:-$(mktemp -d)}
-"$ROOT/bin/msnw-server" -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$LOG/server.log" 2>&1 &
+"$ROOT/bin/msnw-server" -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$LOG/server.log" 2>&1 &
 ns siteA python3 -c '
 import socket,threading
 s=socket.socket(); s.bind(("0.0.0.0",1234)); s.listen(5)

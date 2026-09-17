@@ -26,7 +26,7 @@ import (
 // Server is the rendezvous server.
 type Server struct {
 	Ident     *ident.Identity
-	Secret    string
+	ServerKey string // empty = anyone may use this server
 	RelayPort int
 
 	mu        sync.Mutex
@@ -36,12 +36,11 @@ type Server struct {
 }
 
 type exporter struct {
-	name        string
-	fp          string
-	candidates  []string
-	defaultPort int
-	stream      *quic.Stream
-	writeMu     sync.Mutex
+	name       string
+	fp         string
+	candidates []string
+	stream     *quic.Stream
+	writeMu    sync.Mutex
 }
 
 // Run serves the control listener and the relay socket until ctx ends.
@@ -129,7 +128,7 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 	st.SetReadDeadline(time.Time{})
 	remote := conn.RemoteAddr().String()
 
-	if !ident.AuthOK(s.Secret, m.Auth, conn.ConnectionState().TLS) {
+	if s.ServerKey != "" && !ident.AuthOK(s.ServerKey, ident.LabelServer, m.Auth, conn.ConnectionState().TLS) {
 		log.Printf("%s: %s %q: bad auth", remote, m.Type, m.Name)
 		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "authentication failed"})
 		return
@@ -152,22 +151,21 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 
 func (s *Server) handleRegister(ctx context.Context, st *quic.Stream, m *proto.Message, cands []string, remote string) {
 	ex := &exporter{
-		name:        m.Name,
-		fp:          ident.NormalizeFP(m.Fingerprint),
-		candidates:  cands,
-		defaultPort: m.DefaultPort,
-		stream:      st,
+		name:       m.Name,
+		fp:         ident.NormalizeFP(m.Fingerprint),
+		candidates: cands,
+		stream:     st,
 	}
 	s.mu.Lock()
 	old := s.exporters[m.Name]
 	s.exporters[m.Name] = ex
 	s.mu.Unlock()
 	if old != nil {
-		log.Printf("%s: exporter %q re-registered (replacing %s)", remote, m.Name, old.candidates[0])
+		log.Printf("%s: exporter %s re-registered (replacing %s)", remote, short(m.Name), old.candidates[0])
 		old.send(&proto.Message{Type: proto.TypeError, Error: "replaced by a new registration"})
 		old.stream.CancelRead(0)
 	} else {
-		log.Printf("%s: exporter %q registered, candidates=%v", remote, m.Name, cands)
+		log.Printf("%s: exporter %s registered, candidates=%v", remote, short(m.Name), cands)
 	}
 	if err := ex.send(&proto.Message{Type: proto.TypeOK, Reflexive: remote}); err != nil {
 		return
@@ -184,7 +182,7 @@ func (s *Server) handleRegister(ctx context.Context, st *quic.Stream, m *proto.M
 	s.mu.Lock()
 	if s.exporters[m.Name] == ex {
 		delete(s.exporters, m.Name)
-		log.Printf("%s: exporter %q gone", remote, m.Name)
+		log.Printf("%s: exporter %s gone", remote, short(m.Name))
 	}
 	s.mu.Unlock()
 }
@@ -202,13 +200,13 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 	ex := s.exporters[m.Name]
 	s.mu.Unlock()
 	if ex == nil {
-		log.Printf("%s: connect %q: no such exporter", remote, m.Name)
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "no such exporter: " + m.Name})
+		log.Printf("%s: connect %s: no such exporter", remote, short(m.Name))
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "no such exporter (check the name and the link key)"})
 		return
 	}
 	session := newSession()
 	s.relay.allow(session)
-	log.Printf("%s: connect %q -> %s session=%s", remote, m.Name, ex.candidates[0], session[:8])
+	log.Printf("%s: connect %s -> %s session=%s", remote, short(m.Name), ex.candidates[0], session[:8])
 
 	err := ex.send(&proto.Message{
 		Type:            proto.TypeIncoming,
@@ -227,8 +225,15 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		PeerFingerprint: ex.fp,
 		Candidates:      ex.candidates,
 		RelayPort:       s.RelayPort,
-		DefaultPort:     ex.defaultPort,
 	})
+}
+
+// short abbreviates a hashed name for logs.
+func short(h string) string {
+	if len(h) > 12 {
+		return h[:12] + "…"
+	}
+	return h
 }
 
 func newSession() string {

@@ -30,13 +30,19 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
 
 ## 使い方
 
-全コンポーネント共通で `-secret`(または `$MSNW_SECRET`)が必要。
+鍵は 2 種類、どちらも共有鍵:
+
+- **リンクキー** `-key`(`$MSNW_KEY`): exporter と client が共有する。同じでないと繋がらない。
+  server は知らない。`msnw-client --gen-key` で生成できる。
+- **サーバーキー** `-server-key`(`$MSNW_SERVER_KEY`): server を勝手に使われないための入場券。
+  server 側で未設定なら誰でも使える。
+
 exporter / client は `-s host:port`(または `$MSNW_SERVER`、既定 `localhost:4433`)でサーバーを指す。
 
 ### server
 
 ```
-msnw-server -secret S [-listen :4433] [-relay :4434] [-key server.key]
+msnw-server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
 ```
 
 UDP の 2 ポートを外から到達可能にしておく。`-key` を指定すると鍵を保存して
@@ -47,7 +53,7 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 ### exporter
 
 ```
-msnw-exporter -n hogehoge -t 1234                    # localhost:1234 を hogehoge として公開
+msnw-exporter -key LINKKEY -n hogehoge -t 1234       # localhost:1234 を hogehoge として公開
 msnw-exporter -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
 msnw-exporter -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
 ```
@@ -58,7 +64,8 @@ msnw-exporter -n exit --all                          # 任意の host:port へ�
 ### client
 
 ```
-msnw-client -n hogehoge                 # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
+msnw-client -key LINKKEY -n hogehoge    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
+                                        # 以下 -key は $MSNW_KEY にあるものとして省略
 msnw-client -n hogehoge:8080            # exporter 側の別ポートを指定
 msnw-client -n exit:example.com:80      # --all な exporter 経由で任意ホストへ
 
@@ -102,10 +109,27 @@ ssh -o ProxyCommand='msnw-client -n hogehoge:22' user@anything
 - **リレー**: 1.5 秒経っても直結できなければ server のリレーポート経由で QUIC を張る。
   リレーは UDP をそのまま転送するだけなので、暗号化は end-to-end のまま。
   対称 NAT 同士などはここに落ちる。
-- **認証**: server への認証は共有シークレットを TLS の keying material に HMAC で
-  束縛したもの(再送攻撃不可)。peer 同士は server から受け取った相手の公開鍵
-  フィンガープリントをピン留めして相互 TLS 認証する。exporter は server が紹介した
-  client しか受け付けない。
+- **名前空間**: exporter は名前ではなく `HMAC(リンクキー, 名前)` で登録し、client も同じ値で
+  問い合わせる。server は名前も鍵も知らない。リンクキーが違えば同じ名前でも衝突しない。
+- **認証**: 共有鍵の証明はすべて「その TLS セッションの keying material に対する HMAC」で、
+  他の接続に再送・転用できない。server へはサーバーキーで、peer 間はリンクキーで
+  QUIC 接続直後の最初のストリーム上で双方向に証明する。exporter は証明が済むまで
+  CONNECT を受けず、client も済むまでデータを送らない。server から受け取った公開鍵
+  フィンガープリントのピン留めも残しており、紹介されていない相手の TLS を手前で弾く。
+
+## セキュリティモデル
+
+- server は信用しない。server(または偽 server)が乗っ取られてもできるのは、接続の妨害と
+  「どのハッシュがいつどこから繋いだか」の観察まで。両側に別々の TLS を張って中継しようと
+  しても、リンクキーの証明はセッションごとに違うので流用できない。
+- リンクキーを持つ人は client にも exporter にもなれる(役割は対称)。鍵を共有した仲間内では
+  名前のなりすましが可能なので、信用単位ごとに鍵を分ける。「この人はこのポートだけ」は
+  鍵と exporter を分けて表現する。
+- server はハッシュを見られるので、名前が推測できて鍵が短いと総当たりできる。リンクキーは
+  `--gen-key` で生成したものを使う。
+- 失効は鍵の配り直し。
+- 1 プロセス 1 リンクキー。SOCKS5 モードで鍵の違う exporter 群をまたぐ必要が出たら、
+  優先度付きの複数鍵に拡張する(client 側は名前ごとに鍵を引く構造にしてある)。
 
 ## NAT 越えのテスト(test/natsim.sh)
 
@@ -153,9 +177,8 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
 
 ## 注意
 
-- 既定では server 証明書を検証しない(共有シークレットで server には認証されるが、
-  server のなりすましは防げない)。真面目に運用するなら `-key` で鍵を固定し、
-  `-server-fp` でピン留めする。
+- 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
+  漏れるものは無いが、妨害を避けたいなら server を `-key` で鍵固定し `-server-fp` でピン留めする。
 - Linux で UDP 受信バッファが小さいと quic-go が警告する。高スループットが要るなら
   `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
 - デバッグ用に `MSNW_FORCE_RELAY=1` で client を直結せずリレーのみにできる。

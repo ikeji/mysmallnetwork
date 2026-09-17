@@ -30,11 +30,10 @@ type Message struct {
 	Type string `json:"type"`
 
 	// Register / Connect
-	Name        string   `json:"name,omitempty"`
-	Auth        string   `json:"auth,omitempty"` // hex(HMAC-SHA256(secret, tls-exporter))
+	Name        string   `json:"name,omitempty"` // HMAC(link key, name); the server never sees real names
+	Auth        string   `json:"auth,omitempty"` // hex(HMAC-SHA256(server key, tls-exporter))
 	Fingerprint string   `json:"fp,omitempty"`   // sha256 of the node's SPKI, hex
 	LocalAddrs  []string `json:"local_addrs,omitempty"`
-	DefaultPort int      `json:"default_port,omitempty"` // exporter's default target port
 
 	// OK
 	Reflexive string `json:"reflexive,omitempty"` // node's public addr as seen by the server
@@ -48,6 +47,16 @@ type Message struct {
 	Candidates      []string `json:"candidates,omitempty"`
 	RelayPort       int      `json:"relay_port,omitempty"` // relay UDP port on the server host
 }
+
+// Peer authentication (first stream of every peer connection):
+//
+//	client:   "AUTH <hex tag>\n"                 tag = HMAC(link key, EKM[LabelClient])
+//	exporter: "AUTH <hex tag> <default port>\n"  tag = HMAC(link key, EKM[LabelExporter])
+//
+// Only after both tags verify does the exporter accept CONNECT streams and
+// the client send data. A rendezvous server (or anyone in the middle) that
+// terminates TLS on both sides cannot forward a tag, because the keying
+// material differs per TLS session.
 
 const maxFrame = 64 * 1024
 
