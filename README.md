@@ -28,16 +28,16 @@ Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENA
 cgo 付きでビルドすると libc を動的リンクし、古い glibc のホストで
 `GLIBC_2.34' not found` のようなエラーになる。
 
-## クイックガイド: 手元の ssh を共有する
+## クイックガイド: 手元の ssh / mosh を共有する
 
-自宅の PC(sshd が動いている)に、外出先のノート PC から ssh したい場合。
+自宅の PC(sshd が動いている)に、外出先のノート PC から ssh や mosh したい場合。
 どちらも NAT の奥にいてよく、サーバーを用意する必要はない(公開サーバー
 relay.ikeji.ma を既定で使う)。
 
 **1. 両方の PC にバイナリを置く**
 
 ```
-make            # bin/msnw を両方の PC に置く(PATH を通す必要はない)
+make            # bin/msnw を両方の PC に置く。PATH を通す必要はない
 ```
 
 **2. リンクキーを決める**
@@ -49,25 +49,37 @@ make            # bin/msnw を両方の PC に置く(PATH を通す必要はな�
 **3. 自宅 PC(sshd 側)で公開する**
 
 ```
-msnw export -key mylonglongsecretkey -n home -t 22
+msnw export -key mylonglongsecretkey -n home -t 22 -u 60001
 ```
 
-`home` は好きな名前でよい。リンクキーが違えば他人の `home` とは衝突しない。
+`-t 22` が sshd、`-u 60001` が mosh 用の UDP ポート(ssh だけなら `-u` は不要)。
+`home` は好きな名前でよく、リンクキーが違えば他人の `home` とは衝突しない。
 ログに `registered "home"` と出れば準備完了。起動したままにしておく。
 
-**4. ノート PC から ssh する**
+**4a. ノート PC から mosh する**
+
+```
+msnw mosh -key mylonglongsecretkey user@home
+```
+
+これだけでよい。内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を
+起動し、mosh の UDP をトンネルで転送して `mosh-client` を起動する。
+ノート PC には `ssh` と `mosh-client` が、自宅 PC には `mosh-server` が要る。
+ポートを変えるなら `-p 60002` のように指定し、exporter 側の `-u` も合わせる。
+
+**4b. ノート PC から ssh する**
 
 ```
 ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
 ```
 
 ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
-`~/.ssh/config` に書いておくと `ssh home` だけで済む:
+`~/.ssh/config` に書いておくと `ssh home` だけで済む(`msnw mosh` もこの設定を使う):
 
 ```
 Host home
     User user
-    ProxyCommand msnw client -key mylonglongsecretkey -n home
+    ProxyCommand /path/to/msnw client -key mylonglongsecretkey -n home
 ```
 
 キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
@@ -79,11 +91,15 @@ ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋�
 
 ```
 msnw client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
-ssh -p 2222 user@localhost                         # scp や rsync も同じ要領
+ssh -p 2222 user@localhost                             # scp や rsync も同じ要領
 ```
 
-初回接続時は client のログに `via direct ...` か `via relay ...` と出る。
-`direct` なら NAT 越えの直結、`relay` ならサーバー経由(暗号化は変わらない)。
+**動作の見方**
+
+- 初回接続時に client のログに `via direct ...` か `via relay ...` と出る。`direct` なら
+  NAT 越えの直結、`relay` ならサーバー経由(暗号化は変わらない)。
+- Wi-Fi を切り替えるなどしてネットワークが変わっても、ssh も mosh も数秒止まった後に
+  続きから動く(`session ... resumed` と出る)。
 
 ## 使い方(詳細)
 
