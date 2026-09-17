@@ -104,6 +104,32 @@ ssh -o ProxyCommand='msnw-client -n hogehoge:22' user@anything
   フィンガープリントをピン留めして相互 TLS 認証する。exporter は server が紹介した
   client しか受け付けない。
 
+## NAT 越えのテスト(test/natsim.sh)
+
+Linux のネットワーク名前空間で「公開サーバー + NAT の奥の拠点 2 つ」を作り、
+本物のホールパンチとリレーフォールバックを検証する。sudo 不要(user namespace で動く)。
+`nft`(パッケージ `nftables`)と `iproute2` が必要。
+
+```
+make
+test/natsim.sh cone        # 一般的なルータ相当。直結を期待
+test/natsim.sh symmetric   # ポートが宛先ごとに変わる NAT。リレーを期待
+test/natsim.sh cone -- bash   # 構築だけして中でシェルを開く(ip netns exec siteA ... 等)
+NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT(下記)
+```
+
+構成: `siteA 192.168.1.10 ─ natA(10.0.0.2) ─ br0 ─ natB(10.0.0.3) ─ siteB 192.168.2.10`、
+サーバーは 10.0.0.1。exporter が siteA、client が siteB で動く。
+
+分かっていること:
+
+- cone(masquerade)+ WAN 側で未承諾パケットを INPUT で drop する普通のルータ同士なら直結する。
+- symmetric(`masquerade fully-random`)は直結できずリレーになる。
+- WAN 側 INPUT を drop しない NAT 同士では、相手のパンチが先に届くと conntrack に
+  受信フローとして残り、自分の送信フローに同じポートを再利用してもらえなくなる
+  (mapping が endpoint-independent でなくなる)。両側が同時にパンチする以上これは
+  避けられず、リレーに落ちる。
+
 ## 注意
 
 - 既定では server 証明書を検証しない(共有シークレットで server には認証されるが、
