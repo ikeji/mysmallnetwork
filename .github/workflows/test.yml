@@ -1,0 +1,13 @@
+# Unit tests plus the NAT simulation on every push and pull request.
+name: test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get install -y nftables
+      - run: make test

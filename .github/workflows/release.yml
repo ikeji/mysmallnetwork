@@ -1,0 +1,38 @@
+# Build static binaries for every platform and attach them to a GitHub
+# Release whenever a tag like v1.2.3 is pushed:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Cross-compile
+        run: make cross
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p dist
+          for d in bin/*-*/; do
+            t=$(basename "$d")                      # e.g. linux-amd64
+            if [ -f "$d/msnw.exe" ]; then
+              (cd "$d" && zip -q "../../dist/msnw-${GITHUB_REF_NAME}-$t.zip" msnw.exe)
+            else
+              tar -C "$d" -czf "dist/msnw-${GITHUB_REF_NAME}-$t.tar.gz" msnw
+            fi
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+          ls -l dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
