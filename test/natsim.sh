@@ -43,6 +43,7 @@ if [ -z "${NATSIM_INNER:-}" ]; then
 fi
 shift || true
 [ "${1:-}" = "--" ] && shift
+[ -n "${NATSIM_DEBUG:-}" ] && set -x
 
 # We own a private mount namespace: give "ip netns" a writable /run.
 mount -t tmpfs tmpfs /run
