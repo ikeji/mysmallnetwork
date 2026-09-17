@@ -9,5 +9,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - run: make unit
       - run: sudo apt-get install -y nftables
-      - run: make test
+      # The runners block unprivileged user namespaces, so the network
+      # simulation runs as root (natsim.sh skips the user namespace then).
+      - run: sudo -E env "PATH=$PATH" make natsim roam
