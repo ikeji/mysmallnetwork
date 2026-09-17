@@ -19,10 +19,13 @@
 ## ビルド
 
 ```
-go build -o bin/ ./cmd/...
+make            # CGO_ENABLED=0 の静的バイナリを bin/ に生成
+make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
 ```
 
-Go 1.26 以上(quic-go の要件)。
+Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENABLED=0` を付けること。
+cgo 付きでビルドすると libc を動的リンクし、古い glibc のホストで
+`GLIBC_2.34' not found` のようなエラーになる。
 
 ## 使い方
 
