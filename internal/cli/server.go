@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"mysmallnetwork/internal/ident"
-	"mysmallnetwork/internal/rendezvous"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/rendezvous"
 )
 
 // Server runs the rendezvous + relay server.

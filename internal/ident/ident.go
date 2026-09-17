@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"mysmallnetwork/internal/proto"
+	"github.com/ikeji/mysmallnetwork/internal/proto"
 )
 
 // Identity is a key pair plus its self-signed certificate.

@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"os"
 
-	"mysmallnetwork/internal/cli"
-	"mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/cli"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
 )
 
 const usage = `usage: msnw <command> [options]

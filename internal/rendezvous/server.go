@@ -18,9 +18,9 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
-	"mysmallnetwork/internal/netutil"
-	"mysmallnetwork/internal/proto"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/netutil"
+	"github.com/ikeji/mysmallnetwork/internal/proto"
 )
 
 // Server is the rendezvous server.

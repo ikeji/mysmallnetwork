@@ -16,11 +16,11 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
-	"mysmallnetwork/internal/peer"
-	"mysmallnetwork/internal/proto"
-	"mysmallnetwork/internal/resume"
-	"mysmallnetwork/internal/tunnel"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/peer"
+	"github.com/ikeji/mysmallnetwork/internal/proto"
+	"github.com/ikeji/mysmallnetwork/internal/resume"
+	"github.com/ikeji/mysmallnetwork/internal/tunnel"
 )
 
 type multiFlag []string

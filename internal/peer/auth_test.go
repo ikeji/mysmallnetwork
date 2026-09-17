@@ -8,7 +8,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
 )
 
 // pair dials a QUIC connection between two fresh transports on loopback.

@@ -16,12 +16,12 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
-	"mysmallnetwork/internal/netutil"
-	"mysmallnetwork/internal/peer"
-	"mysmallnetwork/internal/resume"
-	"mysmallnetwork/internal/socks5"
-	"mysmallnetwork/internal/tunnel"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/netutil"
+	"github.com/ikeji/mysmallnetwork/internal/peer"
+	"github.com/ikeji/mysmallnetwork/internal/resume"
+	"github.com/ikeji/mysmallnetwork/internal/socks5"
+	"github.com/ikeji/mysmallnetwork/internal/tunnel"
 )
 
 // pool keeps one authenticated peer connection per exporter name and redials

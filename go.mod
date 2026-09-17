@@ -1,4 +1,4 @@
-module mysmallnetwork
+module github.com/ikeji/mysmallnetwork
 
 go 1.26.0
 

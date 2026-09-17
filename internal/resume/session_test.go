@@ -12,7 +12,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
 )
 
 // quicPair returns a connected client/server QUIC pair on loopback.

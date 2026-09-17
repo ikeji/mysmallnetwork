@@ -9,7 +9,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
-	"mysmallnetwork/internal/ident"
+	"github.com/ikeji/mysmallnetwork/internal/ident"
 )
 
 func quicPair(t *testing.T) (client, server *quic.Conn) {
