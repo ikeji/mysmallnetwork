@@ -14,4 +14,4 @@ jobs:
       - run: sudo apt-get install -y nftables
       # The runners block unprivileged user namespaces, so the network
       # simulation runs as root (natsim.sh skips the user namespace then).
-      - run: sudo -E env "PATH=$PATH" NATSIM_DEBUG=1 make natsim NATSIM_MODES=cone roam
+      - run: sudo -E env "PATH=$PATH" make natsim roam

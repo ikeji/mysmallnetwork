@@ -94,11 +94,13 @@ sys.exit(0 if recovered <= limit else 1)
 PY
 PING=$!
 sleep 5
-ns siteB ip addr add 192.168.2.11/24 dev ethB
+# Delete before add: with promote_secondaries=0 (the kernel default) deleting
+# the primary address would also drop a secondary one in the same subnet.
 ns siteB ip addr del 192.168.2.10/24 dev ethB
+ns siteB ip addr add 192.168.2.11/24 dev ethB
 ns siteB ip route replace default via 192.168.2.1
-ns natB ip addr add 10.0.0.4/24 dev wanB
 ns natB ip addr del 10.0.0.3/24 dev wanB
+ns natB ip addr add 10.0.0.4/24 dev wanB
 wait $PING; rc=$?
 wait $TCP || rc=1
 kill $(jobs -p) 2>/dev/null
