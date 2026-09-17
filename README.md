@@ -28,7 +28,65 @@ Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENA
 cgo 付きでビルドすると libc を動的リンクし、古い glibc のホストで
 `GLIBC_2.34' not found` のようなエラーになる。
 
-## 使い方
+## クイックガイド: 手元の ssh を共有する
+
+自宅の PC(sshd が動いている)に、外出先のノート PC から ssh したい場合。
+どちらも NAT の奥にいてよく、サーバーを用意する必要はない(公開サーバー
+relay.ikeji.ma を既定で使う)。
+
+**1. 両方の PC にバイナリを置く**
+
+```
+make            # または bin/ から msnw-exporter / msnw-client をコピー
+```
+
+**2. リンクキーを 1 つ作り、両方の PC に控える**
+
+```
+msnw-client --gen-key
+# 例: 9xkQ2...(この値を両方で使う。これを知っている人だけが繋がれる)
+```
+
+**3. 自宅 PC(sshd 側)で公開する**
+
+```
+msnw-exporter -key <リンクキー> -n home -t 22
+```
+
+`home` は好きな名前でよい。リンクキーが違えば他人の `home` とは衝突しない。
+ログに `registered "home"` と出れば準備完了。起動したままにしておく。
+
+**4. ノート PC から ssh する**
+
+```
+ssh -o ProxyCommand='msnw-client -key <リンクキー> -n home' user@home
+```
+
+ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
+`~/.ssh/config` に書いておくと `ssh home` だけで済む:
+
+```
+Host home
+    User user
+    ProxyCommand msnw-client -key <リンクキー> -n home
+```
+
+キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
+`export MSNW_KEY=...` しておいて `-key` を省く。
+
+**別解: ローカルポートに出す**
+
+ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
+
+```
+msnw-client -key <リンクキー> -n home -l 2222      # 起動したままにする
+ssh -p 2222 user@localhost                         # scp や rsync も同じ要領
+```
+
+初回接続時は client のログに `via direct ...` か `via relay ...` と出る。
+`direct` なら NAT 越えの直結、`relay` ならサーバー経由(暗号化は変わらない)。
+
+## 使い方(詳細)
 
 鍵は 2 種類、どちらも共有鍵:
 
@@ -51,14 +109,6 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 フィンガープリントが再起動をまたいで固定される。起動時に表示される
 `fingerprint: sha256:...` を exporter / client の `-server-fp`(または
 `$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる。
-
-### 最短の使い方
-
-```
-KEY=$(msnw-client --gen-key)                    # 両端で同じ値を使う
-msnw-exporter -key $KEY -n hogehoge -t 1234     # 公開したい側
-msnw-client   -key $KEY -n hogehoge             # 繋ぎたい側(nc 相当)
-```
 
 ### exporter
 
