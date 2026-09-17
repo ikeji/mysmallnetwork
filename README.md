@@ -114,6 +114,7 @@ Linux のネットワーク名前空間で「公開サーバー + NAT の奥の�
 make
 test/natsim.sh cone        # 一般的なルータ相当。直結を期待
 test/natsim.sh symmetric   # ポートが宛先ごとに変わる NAT。リレーを期待
+test/natsim.sh cone:symmetric   # 片側ずつ指定(siteA:siteB)。混合はリレーを期待
 test/natsim.sh cone -- bash   # 構築だけして中でシェルを開く(ip netns exec siteA ... 等)
 NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT(下記)
 ```
@@ -124,7 +125,10 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
 分かっていること:
 
 - cone(masquerade)+ WAN 側で未承諾パケットを INPUT で drop する普通のルータ同士なら直結する。
-- symmetric(`masquerade fully-random`)は直結できずリレーになる。
+- symmetric(`masquerade fully-random`)は直結できずリレーになる。cone と symmetric の
+  混合(どちらの向きでも)も同様にリレーになる。Linux の masquerade はフィルタが
+  address+port 依存(port-restricted cone)なので、symmetric 側の新しいポートを
+  cone 側が受け付けられない。
 - WAN 側 INPUT を drop しない NAT 同士では、相手のパンチが先に届くと conntrack に
   受信フローとして残り、自分の送信フローに同じポートを再利用してもらえなくなる
   (mapping が endpoint-independent でなくなる)。両側が同時にパンチする以上これは
