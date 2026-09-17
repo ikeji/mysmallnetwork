@@ -71,7 +71,14 @@ func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	// A stateless reset key derived from the (possibly persistent) identity
 	// lets nodes notice a restarted server on their very next packet.
 	srk := quic.StatelessResetKey(sha256.Sum256(append([]byte("msnw-srk:"), s.Ident.Cert.PrivateKey.(ed25519.PrivateKey).Seed()...)))
-	tr := &quic.Transport{Conn: cc, StatelessResetKey: &srk}
+	tr := &quic.Transport{
+		Conn:              cc,
+		StatelessResetKey: &srk,
+		// Always validate the source address with a Retry before doing the
+		// handshake, so a spoofed Initial never gets more bytes back than it
+		// sent (no amplification).
+		VerifySourceAddress: func(net.Addr) bool { return true },
+	}
 	defer tr.Close()
 	ln, err := tr.Listen(s.Ident.ServerConfig(nil), &quic.Config{
 		MaxIdleTimeout:  45 * time.Second,
@@ -205,7 +212,7 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		return
 	}
 	session := newSession()
-	s.relay.allow(session)
+	s.relay.allow(session, ipOf(remote), ipOf(ex.candidates[0]))
 	log.Printf("%s: connect %s -> %s session=%s", remote, short(m.Name), ex.candidates[0], session[:8])
 
 	err := ex.send(&proto.Message{
@@ -226,6 +233,15 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		Candidates:      ex.candidates,
 		RelayPort:       s.RelayPort,
 	})
+}
+
+// ipOf extracts the IP from "host:port".
+func ipOf(hostport string) net.IP {
+	h, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return nil
+	}
+	return net.ParseIP(h)
 }
 
 // short abbreviates a hashed name for logs.
@@ -259,18 +275,22 @@ type relaySession struct {
 	id       string
 	client   *net.UDPAddr
 	exporter *net.UDPAddr
-	created  time.Time
-	lastSeen time.Time
+	// IPs the two parties used on their control connections. A hello is
+	// only accepted from the matching IP (ports may differ behind NAT), so
+	// nobody can bind a spoofed address and turn the relay into a reflector.
+	clientIP, exporterIP net.IP
+	created              time.Time
+	lastSeen             time.Time
 }
 
 func newRelay(c *net.UDPConn) *relay {
 	return &relay{conn: c, sess: map[string]*relaySession{}, addr: map[string]*relaySession{}}
 }
 
-func (r *relay) allow(session string) {
+func (r *relay) allow(session string, clientIP, exporterIP net.IP) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.sess[session] = &relaySession{id: session, created: time.Now(), lastSeen: time.Now()}
+	r.sess[session] = &relaySession{id: session, clientIP: clientIP, exporterIP: exporterIP, created: time.Now(), lastSeen: time.Now()}
 }
 
 func (r *relay) run(ctx context.Context) {
@@ -294,6 +314,13 @@ func (r *relay) handle(b []byte, from *net.UDPAddr) {
 	if session, role, ok := proto.ParseRelayHello(b); ok {
 		rs := r.sess[session]
 		if rs == nil {
+			return
+		}
+		want := rs.exporterIP
+		if role == proto.RoleClient {
+			want = rs.clientIP
+		}
+		if want == nil || !want.Equal(from.IP) {
 			return
 		}
 		key := from.String()
