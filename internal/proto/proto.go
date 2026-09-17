@@ -107,6 +107,14 @@ func PunchPacket(session string) []byte {
 	return append([]byte(punchMagic), session...)
 }
 
+// ParsePunch returns the session id carried by a punch packet.
+func ParsePunch(b []byte) (string, bool) {
+	if len(b) < len(punchMagic) || string(b[:len(punchMagic)]) != punchMagic {
+		return "", false
+	}
+	return string(b[len(punchMagic):]), true
+}
+
 // RelayHello builds the packet a node sends to the relay port to bind its
 // address to a session.
 func RelayHello(session string, role byte) []byte {

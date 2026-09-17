@@ -1,7 +1,7 @@
 #!/bin/bash
 # natsim.sh — simulate two NATed sites and a public server with Linux netns.
 #
-#   usage: test/natsim.sh [MODE | MODE_A:MODE_B] [-- cmd...]     MODE = cone | symmetric
+#   usage: test/natsim.sh [MODE | MODE_A:MODE_B] [-- cmd...]   MODE = cone | fullcone | symmetric
 #
 # Runs entirely inside an unprivileged user namespace (no sudo). Needs
 # iproute2 and nft (package "nftables"; set NFT=/path/to/nft to override).
@@ -12,6 +12,9 @@
 #
 # cone:      masquerade (endpoint-independent mapping; hole punching works)
 # symmetric: masquerade fully-random (per-destination ports; relay needed)
+# fullcone:  masquerade plus a static DNAT of the node's UDP port (like a UPnP
+#            mapping): inbound from any source is accepted. The node in that
+#            site must bind that port: siteA uses -port 40001, siteB 40002.
 # "cone:symmetric" gives siteA (exporter) a cone NAT and siteB (client) a
 # symmetric one. Linux masquerade filters per address+port, so any symmetric
 # side is expected to end up on the relay.
@@ -38,6 +41,8 @@ mount -t tmpfs tmpfs /run
 
 MODE_A=${MODE%%:*}; MODE_B=${MODE#*:}
 masq_for() { [ "$1" = symmetric ] && echo "masquerade fully-random" || echo "masquerade"; }
+port_for() { [ "$1" = A ] && echo 40001 || echo 40002; }
+for m in "$MODE_A" "$MODE_B"; do case $m in cone|fullcone|symmetric) ;; *) echo "bad mode $m" >&2; exit 2;; esac; done
 
 # Typical routers drop unsolicited WAN packets in INPUT, so no conntrack entry
 # is confirmed for them. Without that rule an early punch from the peer is
@@ -57,6 +62,11 @@ ip link set br0 up
 mksite() { # name wan_ip lan_prefix mode
 	local n=$1 wan=$2 lan=$3 MASQ; MASQ=$(masq_for "$4")
 	local INPUT_RULE; INPUT_RULE=$(printf "$INPUT_RULE_TMPL" "$n")
+	local DNAT_RULE="" FWD_RULE=""
+	if [ "$4" = fullcone ]; then
+		DNAT_RULE="iifname \"wan$n\" udp dport $(port_for $n) dnat to $lan.10"
+		FWD_RULE="iifname \"wan$n\" ct status dnat accept"
+	fi
 	ip netns add nat$n
 	ip netns add site$n
 	ip link add wan$n type veth peer name br$n
@@ -75,11 +85,13 @@ mksite() { # name wan_ip lan_prefix mode
 	ns nat$n "$NFT" -f - <<-NFT
 		table ip nat {
 			chain post { type nat hook postrouting priority srcnat; oifname "wan$n" $MASQ; }
+			chain pre { type nat hook prerouting priority dstnat; $DNAT_RULE; }
 		}
 		table ip filter {
 			chain filter_forward { type filter hook forward priority 0; policy drop;
 				iifname "lan$n" accept
 				ct state established,related accept
+				$FWD_RULE
 			}
 			chain filter_input { type filter hook input priority 0; policy accept;
 				$INPUT_RULE
@@ -114,13 +126,15 @@ while True:
     c,_=s.accept(); c.sendall(b"echo:"+c.recv(100)); c.close()
 ' >"$LOG/echo.log" 2>&1 &
 sleep 0.3
-ns siteA "$ROOT/bin/msnw-exporter" -v -n sitea -t 1234 >"$LOG/exporter.log" 2>&1 &
+PORT_A=0; [ "$MODE_A" = fullcone ] && PORT_A=$(port_for A)
+PORT_B=0; [ "$MODE_B" = fullcone ] && PORT_B=$(port_for B)
+ns siteA "$ROOT/bin/msnw-exporter" -v -n sitea -t 1234 -port $PORT_A >"$LOG/exporter.log" 2>&1 &
 sleep 1
 
 rc=0
 for force in "" 1; do
 	label=$([ -n "$force" ] && echo "forced-relay" || echo "auto")
-	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw-client" -v -n sitea 2>"$LOG/client-$label.log" || true)
+	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw-client" -v -n sitea -port $PORT_B 2>"$LOG/client-$label.log" || true)
 	via=$(grep -o 'via .*' "$LOG/client-$label.log" | head -1)
 	if [ "$out" = "echo:hi-$label" ]; then
 		echo "natsim: [$MODE/$label] OK  ($via)"
@@ -128,10 +142,15 @@ for force in "" 1; do
 		echo "natsim: [$MODE/$label] FAILED (got '$out'); logs in $LOG"; rc=1
 	fi
 done
-if [ "$MODE_A:$MODE_B" = cone:cone ] && [ -z "${NATSIM_OPEN_INPUT:-}" ]; then
-	grep -q 'via direct' "$LOG/client-auto.log" || { echo "natsim: expected a direct connection with cone NATs"; rc=1; }
-else
-	grep -q 'via relay' "$LOG/client-auto.log" || { echo "natsim: expected the relay for $MODE"; rc=1; }
+# Direct is expected unless a symmetric NAT faces something other than a
+# full cone. (A full cone accepts the symmetric side's new port, and when the
+# exporter is the symmetric one the client learns the port from the punch.)
+expect=direct
+[ "$MODE_A" = symmetric ] && [ "$MODE_B" != fullcone ] && expect=relay
+[ "$MODE_B" = symmetric ] && [ "$MODE_A" != fullcone ] && expect=relay
+[ -n "${NATSIM_OPEN_INPUT:-}" ] && expect=any
+if [ $expect != any ] && ! grep -q "via $expect" "$LOG/client-auto.log"; then
+	echo "natsim: expected $expect for $MODE_A:$MODE_B"; rc=1
 fi
 kill $(jobs -p) 2>/dev/null
 [ $rc -eq 0 ] && rm -rf "$LOG"

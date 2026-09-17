@@ -236,10 +236,19 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 	go n.RelayHello(ctx, info.Relay, info.Session, proto.RoleClient)
 
 	tlsConf := n.Ident.ClientConfig(info.Fingerprint)
-	results := make(chan dialResult, len(info.Candidates)+1)
+	results := make(chan dialResult, len(info.Candidates)+maxLearned+1)
+	var mu sync.Mutex
 	attempts := 0
+	tried := map[string]bool{}
 	dial := func(addrStr, via string, delay time.Duration) {
+		mu.Lock()
+		if tried[addrStr] || attempts >= cap(results) {
+			mu.Unlock()
+			return
+		}
+		tried[addrStr] = true
 		attempts++
+		mu.Unlock()
 		go func() {
 			if delay > 0 {
 				select {
@@ -262,7 +271,8 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 		}()
 	}
 	relayDelay := 1500 * time.Millisecond
-	if os.Getenv("MSNW_FORCE_RELAY") != "" { // debugging aid: skip direct paths
+	forceRelay := os.Getenv("MSNW_FORCE_RELAY") != "" // debugging aid: skip direct paths
+	if forceRelay {
 		relayDelay = 0
 	} else {
 		for _, c := range info.Candidates {
@@ -271,10 +281,26 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 	}
 	dial(info.Relay.String(), "relay "+info.Relay.String(), relayDelay)
 
+	// A punch from the exporter may arrive from an address the server never
+	// saw (e.g. the exporter sits behind a symmetric NAT and we are reachable
+	// anyway). Dial whatever punches us.
+	if !forceRelay {
+		go n.learnFromPunches(ctx, info.Session, func(addr string) {
+			n.logf("learned candidate %s from punch", addr)
+			dial(addr, "direct "+addr+" (learned)", 0)
+		})
+	}
+
 	var winner *quic.Conn
 	var via string
 	var firstErr error
-	for i := 0; i < attempts; i++ {
+	for i := 0; ; i++ {
+		mu.Lock()
+		done := i >= attempts
+		mu.Unlock()
+		if done {
+			break
+		}
 		r := <-results
 		if r.err != nil {
 			if firstErr == nil {
@@ -293,6 +319,23 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 		return nil, "", fmt.Errorf("could not reach %s: %w", info.Name, firstErr)
 	}
 	return winner, via, nil
+}
+
+const maxLearned = 8
+
+// learnFromPunches reports source addresses of punch packets carrying our
+// session id until ctx ends.
+func (n *Node) learnFromPunches(ctx context.Context, session string, found func(addr string)) {
+	buf := make([]byte, 2048)
+	for {
+		k, from, err := n.Transport.ReadNonQUICPacket(ctx, buf)
+		if err != nil {
+			return
+		}
+		if s, ok := proto.ParsePunch(buf[:k]); ok && s == session {
+			found(from.String())
+		}
+	}
 }
 
 // ---- exporter side ---------------------------------------------------------

@@ -95,7 +95,9 @@ ssh -o ProxyCommand='msnw-client -n hogehoge:22' user@anything
 - **紹介**: client が `-n` の名前を問い合わせると、server は exporter に client の候補
   アドレス(反射アドレス + LAN アドレス)を、client に exporter の候補を渡す。
 - **ホールパンチ**: 両側が相手の全候補へ小さな UDP パケットを撃ちつつ、client が
-  全候補へ並行して QUIC を dial する。最初に握手が終わったものを採用。
+  全候補へ並行して QUIC を dial する。最初に握手が終わったものを採用。client は
+  届いたパンチの送信元アドレスも候補に加える(exporter が symmetric NAT の奥でも、
+  client 側が full cone なら繋がる)。
 - **リレー**: 1.5 秒経っても直結できなければ server のリレーポート経由で QUIC を張る。
   リレーは UDP をそのまま転送するだけなので、暗号化は end-to-end のまま。
   対称 NAT 同士などはここに落ちる。
@@ -114,7 +116,8 @@ Linux のネットワーク名前空間で「公開サーバー + NAT の奥の�
 make
 test/natsim.sh cone        # 一般的なルータ相当。直結を期待
 test/natsim.sh symmetric   # ポートが宛先ごとに変わる NAT。リレーを期待
-test/natsim.sh cone:symmetric   # 片側ずつ指定(siteA:siteB)。混合はリレーを期待
+test/natsim.sh fullcone    # 送信元を問わず受け付ける NAT(UPnP でポートを開けた状態相当)
+test/natsim.sh cone:symmetric   # 片側ずつ指定(siteA:siteB)
 test/natsim.sh cone -- bash   # 構築だけして中でシェルを開く(ip netns exec siteA ... 等)
 NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT(下記)
 ```
@@ -129,6 +132,19 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
   混合(どちらの向きでも)も同様にリレーになる。Linux の masquerade はフィルタが
   address+port 依存(port-restricted cone)なので、symmetric 側の新しいポートを
   cone 側が受け付けられない。
+- full cone が片側にあれば、相手が symmetric でも直結できる。exporter が symmetric で
+  client が full cone の場合、server が見た exporter のポートは使えないが、exporter の
+  パンチが client に届くので、client はその送信元アドレスを候補として学習して dial する。
+  full cone は masquerade では作れないので、シミュレータでは対象ポートへの静的 DNAT で
+  代用している(siteA は UDP 40001、siteB は 40002 を `-port` で固定)。
+
+| siteA(exporter) : siteB(client) | 結果 |
+|---|---|
+| cone : cone | 直結 |
+| fullcone : cone / cone : fullcone / fullcone : fullcone | 直結 |
+| fullcone : symmetric | 直結 |
+| symmetric : fullcone | 直結(パンチから学習した候補) |
+| cone : symmetric / symmetric : cone / symmetric : symmetric | リレー |
 - WAN 側 INPUT を drop しない NAT 同士では、相手のパンチが先に届くと conntrack に
   受信フローとして残り、自分の送信フローに同じポートを再利用してもらえなくなる
   (mapping が endpoint-independent でなくなる)。両側が同時にパンチする以上これは
