@@ -75,6 +75,10 @@ func (p *policy) resolve(req string) (string, error) {
 	return "", fmt.Errorf("target %s is not exported", req)
 }
 
+// DefaultServer is the public rendezvous server used when -s / $MSNW_SERVER
+// is not given, so a downloaded binary works without running a server.
+const DefaultServer = "relay.ikeji.ma:4433"
+
 func main() {
 	// quic-go warns loudly when the UDP receive buffer is small; the warning is
 	// harmless for a tunnel of this size, and sysctl advice lives in the README.
@@ -85,7 +89,7 @@ func main() {
 	var targets multiFlag
 	flag.Var(&targets, "t", "target to export: port or host:port (repeatable; first is the default)")
 	all := flag.Bool("all", false, "let clients connect to any host:port through this exporter")
-	server := flag.String("s", envOr("MSNW_SERVER", "localhost:4433"), "rendezvous server host:port (or $MSNW_SERVER)")
+	server := flag.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
 	linkKey := flag.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
 	serverKey := flag.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := flag.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")

@@ -99,6 +99,10 @@ func (p *pool) open(ctx context.Context, name, target string) (*quic.Stream, *tu
 	return st, rd, nil
 }
 
+// DefaultServer is the public rendezvous server used when -s / $MSNW_SERVER
+// is not given, so a downloaded binary works without running a server.
+const DefaultServer = "relay.ikeji.ma:4433"
+
 func main() {
 	// quic-go warns loudly when the UDP receive buffer is small; the warning is
 	// harmless for a tunnel of this size, and sysctl advice lives in the README.
@@ -111,7 +115,7 @@ func main() {
 	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in socks5 mode)")
 	listen := fs.String("l", "", "listen locally (port, :port or host:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
-	server := fs.String("s", envOr("MSNW_SERVER", "localhost:4433"), "rendezvous server host:port (or $MSNW_SERVER)")
+	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required")
 	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")

@@ -37,7 +37,9 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
 - **サーバーキー** `-server-key`(`$MSNW_SERVER_KEY`): server を勝手に使われないための入場券。
   server 側で未設定なら誰でも使える。
 
-exporter / client は `-s host:port`(または `$MSNW_SERVER`、既定 `localhost:4433`)でサーバーを指す。
+exporter / client は既定で公開サーバー `relay.ikeji.ma:4433`(サーバーキー無し)を使うので、
+バイナリを落としてリンクキーを決めればすぐ使える。自前のサーバーを使うときは
+`-s host:port`(または `$MSNW_SERVER`)で指す。
 
 ### server
 
@@ -49,6 +51,14 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 フィンガープリントが再起動をまたいで固定される。起動時に表示される
 `fingerprint: sha256:...` を exporter / client の `-server-fp`(または
 `$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる。
+
+### 最短の使い方
+
+```
+KEY=$(msnw-client --gen-key)                    # 両端で同じ値を使う
+msnw-exporter -key $KEY -n hogehoge -t 1234     # 公開したい側
+msnw-client   -key $KEY -n hogehoge             # 繋ぎたい側(nc 相当)
+```
 
 ### exporter
 

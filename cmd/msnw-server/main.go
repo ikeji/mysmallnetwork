@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -26,7 +25,7 @@ func main() {
 	key := flag.String("key", "", "path to persistent private key (created if missing); default: ephemeral")
 	flag.Parse()
 	if *serverKey == "" {
-		fmt.Fprintln(os.Stderr, "msnw-server: no -server-key set; anyone can use this server")
+		log.Print("no -server-key set: this is an open server (link keys still protect every tunnel)")
 	}
 	var id *ident.Identity
 	var err error
