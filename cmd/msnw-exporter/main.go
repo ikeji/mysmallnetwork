@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -177,20 +178,21 @@ func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey str
 				return
 			}
 			log.Printf("peer connected from %s", conn.RemoteAddr())
+			mux := tunnel.NewUDPMux(conn)
 			for {
 				st, err := conn.AcceptStream(ctx)
 				if err != nil {
 					log.Printf("peer %s closed: %v", conn.RemoteAddr(), err)
 					return
 				}
-				go serveStream(st, pol)
+				go serveStream(st, pol, mux)
 			}
 		}()
 	}
 }
 
-func serveStream(st *quic.Stream, pol *policy) {
-	req, rd, err := tunnel.Accept(st)
+func serveStream(st *quic.Stream, pol *policy, mux *tunnel.UDPMux) {
+	verb, req, rd, err := tunnel.Accept(st)
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
@@ -199,6 +201,10 @@ func serveStream(st *quic.Stream, pol *policy) {
 	target, err := pol.resolve(req)
 	if err != nil {
 		tunnel.Reject(st, err.Error())
+		return
+	}
+	if verb == tunnel.VerbUDP {
+		serveUDP(st, rd, mux, target)
 		return
 	}
 	c, err := net.DialTimeout("tcp", target, 10*time.Second)
@@ -211,6 +217,59 @@ func serveStream(st *quic.Stream, pol *policy) {
 		return
 	}
 	tunnel.Pipe(st, rd, c)
+}
+
+// serveUDP relays one UDP flow to target until the client closes it or it
+// stays idle for udpIdle.
+func serveUDP(st *quic.Stream, rd *bufio.Reader, mux *tunnel.UDPMux, target string) {
+	addr, err := net.ResolveUDPAddr("udp", target)
+	if err != nil {
+		tunnel.Reject(st, err.Error())
+		return
+	}
+	uc, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		tunnel.Reject(st, err.Error())
+		return
+	}
+	flow, err := mux.Accept(st, rd, func(p []byte) { uc.Write(p) })
+	if err != nil {
+		uc.Close()
+		return
+	}
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, err := uc.Read(buf)
+			if err != nil {
+				flow.Close()
+				return
+			}
+			if err := flow.Send(buf[:n]); err != nil {
+				flow.Close()
+				return
+			}
+		}
+	}()
+	for flow.Idle() < udpIdle {
+		time.Sleep(10 * time.Second)
+		if flowClosed(flow) {
+			break
+		}
+	}
+	flow.Close()
+	uc.Close()
+}
+
+const udpIdle = 10 * time.Minute
+
+func flowClosed(f *tunnel.UDPFlow) bool {
+	select {
+	case <-f.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 func envOr(k, d string) string {

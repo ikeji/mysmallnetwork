@@ -43,20 +43,26 @@ func Open(st *quic.Stream, target string) (*bufio.Reader, error) {
 	return nil, fmt.Errorf("bad response %q", line)
 }
 
-// Accept reads the CONNECT request from st.
-func Accept(st *quic.Stream) (target string, br *bufio.Reader, err error) {
+// Request verbs.
+const (
+	VerbConnect = "CONNECT" // one TCP connection on this stream
+	VerbUDP     = "UDP"     // one UDP flow (see udp.go)
+)
+
+// Accept reads the request line from st and returns its verb and target.
+func Accept(st *quic.Stream) (verb, target string, br *bufio.Reader, err error) {
 	br = bufio.NewReader(st)
 	st.SetReadDeadline(time.Now().Add(15 * time.Second))
 	line, err := br.ReadString('\n')
 	st.SetReadDeadline(time.Time{})
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	line = strings.TrimRight(line, "\r\n")
-	if !strings.HasPrefix(line, "CONNECT ") && line != "CONNECT" {
-		return "", nil, fmt.Errorf("bad request %q", line)
+	verb, target, _ = strings.Cut(strings.TrimRight(line, "\r\n"), " ")
+	if verb != VerbConnect && verb != VerbUDP {
+		return "", "", nil, fmt.Errorf("bad request %q", line)
 	}
-	return strings.TrimSpace(strings.TrimPrefix(line, "CONNECT")), br, nil
+	return verb, strings.TrimSpace(target), br, nil
 }
 
 // Reject answers a CONNECT with an error.

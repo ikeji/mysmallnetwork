@@ -42,6 +42,7 @@ type entry struct {
 	mu          sync.Mutex
 	conn        *quic.Conn
 	defaultPort int
+	udp         *tunnel.UDPMux // lazily created for conn
 }
 
 func (p *pool) keyFor(name string) string { return p.linkKey }
@@ -80,6 +81,23 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	return conn, port, nil
 }
 
+// udpMux returns the UDP multiplexer for the live connection to name.
+func (p *pool) udpMux(ctx context.Context, name string) (*tunnel.UDPMux, error) {
+	conn, _, err := p.get(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	e := p.ents[name]
+	p.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.udp == nil || e.conn != conn {
+		e.udp = tunnel.NewUDPMux(conn)
+	}
+	return e.udp, nil
+}
+
 // open returns a stream to target on exporter name, already CONNECTed.
 func (p *pool) open(ctx context.Context, name, target string) (*quic.Stream, *tunnel.Reader, error) {
 	conn, _, err := p.get(ctx, name)
@@ -113,7 +131,7 @@ func main() {
 	args = netutil.OptionalValueFlag(args, "socks5", "127.0.0.1:1080")
 	fs := flag.NewFlagSet("msnw-client", flag.ExitOnError)
 	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in socks5 mode)")
-	listen := fs.String("l", "", "listen locally (port, :port or host:port; bare -l uses the exporter's port)")
+	listen := fs.String("l", "", "listen locally (port, :port, host:port, or udp:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
 	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required")
@@ -170,6 +188,14 @@ func runStdio(ctx context.Context, p *pool, spec string) {
 
 func runListen(ctx context.Context, p *pool, spec, listen string) {
 	name, target := netutil.SplitName(spec)
+	udp := false
+	if strings.HasPrefix(listen, "udp:") {
+		udp = true
+		listen = strings.TrimPrefix(listen, "udp:")
+		if listen == "" {
+			listen = "auto"
+		}
+	}
 	// Connect eagerly: it validates the name and tells us the default port.
 	_, defaultPort, err := p.get(ctx, name)
 	if err != nil {
@@ -193,6 +219,10 @@ func runListen(ctx context.Context, p *pool, spec, listen string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if udp {
+		runListenUDP(ctx, p, name, target, addr)
+		return
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatal(err)
@@ -213,6 +243,80 @@ func runListen(ctx context.Context, p *pool, spec, listen string) {
 			}
 			tunnel.Pipe(st, rd, c)
 		}()
+	}
+}
+
+const udpIdle = 10 * time.Minute
+
+// runListenUDP forwards datagrams arriving on addr to target on exporter
+// name, one flow per local source address.
+func runListenUDP(ctx context.Context, p *pool, name, target, addr string) {
+	ua, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	uc, err := net.ListenUDP("udp", ua)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { <-ctx.Done(); uc.Close() }()
+	log.Printf("listening on udp %s -> %s:%s", uc.LocalAddr(), name, target)
+
+	var mu sync.Mutex
+	flows := map[string]*tunnel.UDPFlow{}
+	go func() { // reap idle flows
+		t := time.NewTicker(30 * time.Second)
+		defer t.Stop()
+		for range t.C {
+			mu.Lock()
+			for k, f := range flows {
+				if f.Idle() > udpIdle {
+					f.Close()
+					delete(flows, k)
+				}
+			}
+			mu.Unlock()
+		}
+	}()
+	buf := make([]byte, 65535)
+	for {
+		n, src, err := uc.ReadFromUDP(buf)
+		if err != nil {
+			return
+		}
+		key := src.String()
+		mu.Lock()
+		f := flows[key]
+		if f != nil {
+			select {
+			case <-f.Done():
+				f = nil
+			default:
+			}
+		}
+		mu.Unlock()
+		if f == nil {
+			mux, err := p.udpMux(ctx, name)
+			if err != nil {
+				log.Printf("udp %s: %v", key, err)
+				continue
+			}
+			octx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			dst := src
+			f, err = mux.Open(octx, target, func(pl []byte) { uc.WriteToUDP(pl, dst) })
+			cancel()
+			if err != nil {
+				log.Printf("udp %s: %v", key, err)
+				continue
+			}
+			mu.Lock()
+			flows[key] = f
+			mu.Unlock()
+		}
+		if err := f.Send(buf[:n]); err != nil {
+			log.Printf("udp %s: %v", key, err)
+			f.Close()
+		}
 	}
 }
 

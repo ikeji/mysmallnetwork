@@ -92,6 +92,7 @@ func peerConfig() *quic.Config {
 		KeepAlivePeriod:      15 * time.Second,
 		HandshakeIdleTimeout: 6 * time.Second,
 		MaxIncomingStreams:   4096,
+		EnableDatagrams:      true,
 	}
 }
 

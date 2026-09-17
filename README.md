@@ -131,6 +131,7 @@ msnw-client -n exit:example.com:80      # --all な exporter 経由で任意ホ�
 msnw-client -n hogehoge -l              # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
 msnw-client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定ターゲット
 msnw-client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
+msnw-client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
 
 msnw-client --socks5                    # 127.0.0.1:1080 で SOCKS5
 msnw-client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
@@ -154,8 +155,22 @@ SOCKS5 モードでの宛先ホストの解釈:
 ssh -o ProxyCommand='msnw-client -n hogehoge:22' user@anything
 ```
 
+例: mosh(`msnw-mosh`)
+
+```
+msnw-exporter -key K -n home -t 22 -t 60001     # sshd を既定に、mosh 用 UDP ポートも許可
+msnw-mosh -key K user@home                      # -p で mosh のポートを変えられる(既定 60001)
+```
+
+`msnw-mosh` は ssh(ProxyCommand 経由)で `mosh-server` を 127.0.0.1 限定で起動し、
+ローカル UDP ポートを exporter 側の同じポートへ転送してから `mosh-client` を
+127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには `MSNW_MOSH_SSH` を使う。
+
 ## 仕組み
 
+- **UDP**: `-l udp:PORT` で受けたデータグラムは、QUIC の datagram 拡張(RFC 9221)で運ぶ。
+  1 パケットに収まらないものはフロー用ストリーム上に長さ付きで送る。フローは
+  ローカルの送信元アドレスごとに 1 本で、10 分無通信で閉じる。
 - **1 ソケット共用**: 各ノードは 1 つの UDP ソケットで server との制御 QUIC 接続と
   peer との QUIC 接続を両方さばく。server が制御接続で観測した「外から見えるアドレス」が
   そのまま P2P で使う NAT マッピングになる(STUN 相当)。
