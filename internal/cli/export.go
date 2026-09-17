@@ -1,5 +1,4 @@
-// msnw-exporter: publishes local TCP services under a name.
-package main
+package cli
 
 import (
 	"bufio"
@@ -77,35 +76,29 @@ func (p *policy) resolve(req string) (string, error) {
 	return "", fmt.Errorf("target %s is not exported", req)
 }
 
-// DefaultServer is the public rendezvous server used when -s / $MSNW_SERVER
-// is not given, so a downloaded binary works without running a server.
-const DefaultServer = "relay.ikeji.ma:4433"
-
-func main() {
-	// quic-go warns loudly when the UDP receive buffer is small; the warning is
-	// harmless for a tunnel of this size, and sysctl advice lives in the README.
-	if os.Getenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING") == "" {
-		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
-	}
-	name := flag.String("n", "", "name to export under (required)")
+// Export publishes local services under a name.
+func Export(args []string) {
+	fs := flag.NewFlagSet("msnw export", flag.ExitOnError)
+	quietQUIC()
+	name := fs.String("n", "", "name to export under (required)")
 	var targets multiFlag
-	flag.Var(&targets, "t", "target to export: port or host:port (repeatable; first is the default)")
-	all := flag.Bool("all", false, "let clients connect to any host:port through this exporter")
-	server := flag.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
-	linkKey := flag.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
-	serverKey := flag.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
-	serverFP := flag.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
-	port := flag.Int("port", 0, "local UDP port to bind (0 = random)")
-	genKey := flag.Bool("gen-key", false, "print a fresh random link key and exit")
-	verbose := flag.Bool("v", false, "verbose logging")
-	flag.Parse()
+	fs.Var(&targets, "t", "target to export: port or host:port (repeatable; first is the default)")
+	all := fs.Bool("all", false, "let clients connect to any host:port through this exporter")
+	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
+	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
+	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
+	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
+	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
+	genKey := fs.Bool("gen-key", false, "print a fresh random link key and exit")
+	verbose := fs.Bool("v", false, "verbose logging")
+	fs.Parse(args)
 
 	if *genKey {
 		fmt.Println(ident.GenerateKey())
 		return
 	}
 	if *name == "" || *linkKey == "" || (len(targets) == 0 && !*all) {
-		fmt.Fprintln(os.Stderr, "usage: msnw-exporter -n NAME -t [host:]port [-t ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
+		fmt.Fprintln(os.Stderr, "usage: msnw export -n NAME -t [host:]port [-t ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
 		os.Exit(2)
 	}
 	pol := &policy{all: *all}
@@ -300,7 +293,7 @@ func serveUDP(st *quic.Stream, rd *bufio.Reader, mux *tunnel.UDPMux, target stri
 			}
 		}
 	}()
-	for flow.Idle() < udpIdle {
+	for flow.Idle() < exportUDPIdle {
 		time.Sleep(10 * time.Second)
 		if flowClosed(flow) {
 			break
@@ -310,7 +303,7 @@ func serveUDP(st *quic.Stream, rd *bufio.Reader, mux *tunnel.UDPMux, target stri
 	uc.Close()
 }
 
-const udpIdle = 10 * time.Minute
+const exportUDPIdle = 10 * time.Minute
 
 func flowClosed(f *tunnel.UDPFlow) bool {
 	select {
@@ -319,11 +312,4 @@ func flowClosed(f *tunnel.UDPFlow) bool {
 	default:
 		return false
 	}
-}
-
-func envOr(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
 }

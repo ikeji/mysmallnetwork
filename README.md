@@ -4,11 +4,11 @@
 
 ```
         ┌──────────────┐  紹介 / NAT 越え補助 / 最後の手段のリレー
-        │ msnw-server  │  (QUIC 制御 :4433, UDP リレー :4434)
+        │ msnw server  │  (QUIC 制御 :4433, UDP リレー :4434)
         └──────┬───────┘
      登録 ↗           ↖ 問い合わせ
 ┌──────────────┐  QUIC (P2P, 直結 or リレー)  ┌──────────────┐
-│ msnw-exporter│ ◀═══════════════════════════▶ │ msnw-client  │
+│ msnw export│ ◀═══════════════════════════▶ │ msnw client  │
 │  -n hogehoge │   1 TCP 接続 = 1 QUIC stream  │              │
 │  -t 1234     │                                │ stdio / -l / │
 └──────┬───────┘                                │   --socks5   │
@@ -19,7 +19,7 @@
 ## ビルド
 
 ```
-make            # CGO_ENABLED=0 の静的バイナリを bin/ に生成
+make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server / export / client / mosh / gen-key サブコマンド)
 make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
 make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
 ```
@@ -37,19 +37,19 @@ relay.ikeji.ma を既定で使う)。
 **1. 両方の PC にバイナリを置く**
 
 ```
-make            # または bin/ から msnw-exporter / msnw-client をコピー
+make            # bin/msnw を両方の PC に置く(PATH を通す必要はない)
 ```
 
 **2. リンクキーを決める**
 
 両方の PC で同じ文字列を使う。以下では `mylonglongsecretkey` とする。
 これを知っている人だけが繋がれるので、推測されにくい長いものにする
-(`msnw-client --gen-key` でランダムに作ってもよい)。
+(`msnw gen-key` でランダムに作ってもよい)。
 
 **3. 自宅 PC(sshd 側)で公開する**
 
 ```
-msnw-exporter -key mylonglongsecretkey -n home -t 22
+msnw export -key mylonglongsecretkey -n home -t 22
 ```
 
 `home` は好きな名前でよい。リンクキーが違えば他人の `home` とは衝突しない。
@@ -58,7 +58,7 @@ msnw-exporter -key mylonglongsecretkey -n home -t 22
 **4. ノート PC から ssh する**
 
 ```
-ssh -o ProxyCommand='msnw-client -key mylonglongsecretkey -n home' user@home
+ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
 ```
 
 ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
@@ -67,7 +67,7 @@ ssh -o ProxyCommand='msnw-client -key mylonglongsecretkey -n home' user@home
 ```
 Host home
     User user
-    ProxyCommand msnw-client -key mylonglongsecretkey -n home
+    ProxyCommand msnw client -key mylonglongsecretkey -n home
 ```
 
 キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
@@ -78,7 +78,7 @@ Host home
 ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
 
 ```
-msnw-client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
+msnw client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
 ssh -p 2222 user@localhost                         # scp や rsync も同じ要領
 ```
 
@@ -90,7 +90,7 @@ ssh -p 2222 user@localhost                         # scp や rsync も同じ要�
 鍵は 2 種類、どちらも共有鍵:
 
 - **リンクキー** `-key`(`$MSNW_KEY`): exporter と client が共有する。同じでないと繋がらない。
-  server は知らない。`msnw-client --gen-key` で生成できる。
+  server は知らない。`msnw gen-key` で生成できる。
 - **サーバーキー** `-server-key`(`$MSNW_SERVER_KEY`): server を勝手に使われないための入場券。
   server 側で未設定なら誰でも使える。
 
@@ -101,7 +101,7 @@ exporter / client は既定で公開サーバー `relay.ikeji.ma:4433`(サーバ
 ### server
 
 ```
-msnw-server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
+msnw server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
 ```
 
 UDP の 2 ポートを外から到達可能にしておく。`-key` を指定すると鍵を保存して
@@ -112,9 +112,9 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 ### exporter
 
 ```
-msnw-exporter -key LINKKEY -n hogehoge -t 1234       # localhost:1234 を hogehoge として公開
-msnw-exporter -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
-msnw-exporter -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
+msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 を hogehoge として公開
+msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
+msnw export -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
 ```
 
 `-t` は `port`(= localhost:port)または `host:port`。`--all` は `-t` と併用でき、
@@ -123,18 +123,18 @@ msnw-exporter -n exit --all                          # 任意の host:port へ�
 ### client
 
 ```
-msnw-client -key LINKKEY -n hogehoge    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
+msnw client -key LINKKEY -n hogehoge    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
                                         # 以下 -key は $MSNW_KEY にあるものとして省略
-msnw-client -n hogehoge:8080            # exporter 側の別ポートを指定
-msnw-client -n exit:example.com:80      # --all な exporter 経由で任意ホストへ
+msnw client -n hogehoge:8080            # exporter 側の別ポートを指定
+msnw client -n exit:example.com:80      # --all な exporter 経由で任意ホストへ
 
-msnw-client -n hogehoge -l              # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
-msnw-client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定ターゲット
-msnw-client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
-msnw-client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw client -n hogehoge -l              # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
+msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定ターゲット
+msnw client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
+msnw client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
 
-msnw-client --socks5                    # 127.0.0.1:1080 で SOCKS5
-msnw-client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
+msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5
+msnw client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
 ```
 
 SOCKS5 モードでの宛先ホストの解釈:
@@ -152,19 +152,21 @@ SOCKS5 モードでの宛先ホストの解釈:
 例: ssh
 
 ```
-ssh -o ProxyCommand='msnw-client -n hogehoge:22' user@anything
+ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
 ```
 
-例: mosh(`msnw-mosh`)
+例: mosh(`msnw mosh`)
 
 ```
-msnw-exporter -key K -n home -t 22 -t 60001     # sshd を既定に、mosh 用 UDP ポートも許可
-msnw-mosh -key K user@home                      # -p で mosh のポートを変えられる(既定 60001)
+msnw export -key K -n home -t 22 -t 60001     # sshd を既定に、mosh 用 UDP ポートも許可
+msnw mosh -key K user@home                      # -p で mosh のポートを変えられる(既定 60001)
 ```
 
-`msnw-mosh` は ssh(ProxyCommand 経由)で `mosh-server` を 127.0.0.1 限定で起動し、
-ローカル UDP ポートを exporter 側の同じポートへ転送してから `mosh-client` を
-127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには `MSNW_MOSH_SSH` を使う。
+`msnw mosh` は ssh(ProxyCommand に自分自身のパスを渡す)で `mosh-server` を
+127.0.0.1 限定で起動し、ローカル UDP ポートを exporter 側の同じポートへ同一プロセス内で
+転送してから `mosh-client` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
+`-ssh "..."` か `MSNW_MOSH_SSH` を使う。リンクキーは環境変数で子プロセスに渡すので
+コマンドラインに出ない。
 
 ## 仕組み
 

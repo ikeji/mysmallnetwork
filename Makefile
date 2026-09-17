@@ -8,7 +8,6 @@ NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetr
 
 all:
 	go build $(GOFLAGS) -o bin/ ./cmd/...
-	cp scripts/msnw-mosh bin/
 
 test: unit natsim roam
 

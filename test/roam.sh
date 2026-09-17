@@ -14,7 +14,7 @@ ns() { ip netns exec "$@"; }
 # reaches the command itself instead of an intermediate shell.
 nsbg() { exec ip netns exec "$@"; }
 
-"$ROOT/bin/msnw-server" -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$L/server.log" 2>&1 &
+"$ROOT/bin/msnw" server -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$L/server.log" 2>&1 &
 nsbg siteA python3 -c '
 import socket
 s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(("0.0.0.0",21300))
@@ -22,7 +22,7 @@ while True:
     d,a=s.recvfrom(65535); s.sendto(d,a)
 ' >/dev/null 2>&1 &
 sleep 0.3
-nsbg siteA "$ROOT/bin/msnw-exporter" -n sitea -t 21300 -t 21301 >"$L/exporter.log" 2>&1 &
+nsbg siteA "$ROOT/bin/msnw" export -n sitea -t 21300 -t 21301 >"$L/exporter.log" 2>&1 &
 sleep 1
 nsbg siteA python3 -c '
 import socket, threading
@@ -37,8 +37,8 @@ while True:
     c,_=s.accept(); threading.Thread(target=h,args=(c,),daemon=True).start()
 ' >/dev/null 2>&1 &
 sleep 0.3
-nsbg siteB "$ROOT/bin/msnw-client" -v -n sitea -l udp:31300 >"$L/client.log" 2>&1 &
-nsbg siteB "$ROOT/bin/msnw-client" -v -n sitea:21301 -l 31301 >"$L/client-tcp.log" 2>&1 &
+nsbg siteB "$ROOT/bin/msnw" client -v -n sitea -l udp:31300 >"$L/client.log" 2>&1 &
+nsbg siteB "$ROOT/bin/msnw" client -v -n sitea:21301 -l 31301 >"$L/client-tcp.log" 2>&1 &
 sleep 1.5
 
 # TCP: one connection sends numbered lines for the whole test and checks the

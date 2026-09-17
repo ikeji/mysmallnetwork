@@ -30,7 +30,7 @@ command -v "$NFT" >/dev/null || for c in /usr/sbin/nft /sbin/nft; do [ -x $c ] &
 
 if [ -z "${NATSIM_INNER:-}" ]; then
 	command -v "$NFT" >/dev/null || { echo "nft not found; apt install nftables or set NFT=" >&2; exit 1; }
-	[ -x "$ROOT/bin/msnw-server" ] || { echo "build first: make" >&2; exit 1; }
+	[ -x "$ROOT/bin/msnw" ] || { echo "build first: make" >&2; exit 1; }
 	# Map to our own uid (not root) but keep capabilities, so programs that
 	# special-case uid 0 (sshd's privilege separation, for one) behave as for
 	# a normal user while we can still build interfaces and firewall rules.
@@ -124,7 +124,7 @@ fi
 # ---- built-in smoke test ----------------------------------------------------
 export MSNW_KEY=natsim-link MSNW_SERVER_KEY=natsim MSNW_SERVER=10.0.0.1:4433 QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
 LOG=${NATSIM_LOG:-$(mktemp -d)}
-"$ROOT/bin/msnw-server" -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$LOG/server.log" 2>&1 &
+"$ROOT/bin/msnw" server -server-key natsim -listen 10.0.0.1:4433 -relay 10.0.0.1:4434 >"$LOG/server.log" 2>&1 &
 nsbg siteA python3 -c '
 import socket,threading
 s=socket.socket(); s.bind(("0.0.0.0",1234)); s.listen(5)
@@ -134,13 +134,13 @@ while True:
 sleep 0.3
 PORT_A=0; [ "$MODE_A" = fullcone ] && PORT_A=$(port_for A)
 PORT_B=0; [ "$MODE_B" = fullcone ] && PORT_B=$(port_for B)
-nsbg siteA "$ROOT/bin/msnw-exporter" -v -n sitea -t 1234 -port $PORT_A >"$LOG/exporter.log" 2>&1 &
+nsbg siteA "$ROOT/bin/msnw" export -v -n sitea -t 1234 -port $PORT_A >"$LOG/exporter.log" 2>&1 &
 sleep 1
 
 rc=0
 for force in "" 1; do
 	label=$([ -n "$force" ] && echo "forced-relay" || echo "auto")
-	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw-client" -v -n sitea -port $PORT_B 2>"$LOG/client-$label.log" || true)
+	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw" client -v -n sitea -port $PORT_B 2>"$LOG/client-$label.log" || true)
 	via=$(grep -o 'via .*' "$LOG/client-$label.log" | head -1)
 	if [ "$out" = "echo:hi-$label" ]; then
 		echo "natsim: [$MODE/$label] OK  ($via)"

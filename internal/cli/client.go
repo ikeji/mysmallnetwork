@@ -1,9 +1,4 @@
-// msnw-client: reaches services published by msnw-exporter.
-//
-//	msnw-client -n NAME[:port]            pipe stdin/stdout to the service (nc / ProxyCommand style)
-//	msnw-client -n NAME[:port] -l [addr]  listen locally and forward each TCP connection
-//	msnw-client --socks5 [addr] [-n NAME] SOCKS5 proxy; hosts "NAME", "NAME.msnw", "host.NAME.msnw"
-package main
+package cli
 
 import (
 	"context"
@@ -222,51 +217,83 @@ func (p *pool) tryResume(name string, s *resume.Session) error {
 // is not given, so a downloaded binary works without running a server.
 const DefaultServer = "relay.ikeji.ma:4433"
 
-func main() {
-	// quic-go warns loudly when the UDP receive buffer is small; the warning is
-	// harmless for a tunnel of this size, and sysctl advice lives in the README.
+// nodeFlags are the connection options shared by client-side subcommands.
+type nodeFlags struct {
+	server, linkKey, serverKey, serverFP *string
+	port                                 *int
+	verbose                              *bool
+}
+
+func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
+	return &nodeFlags{
+		server:    fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)"),
+		linkKey:   fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required"),
+		serverKey: fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one"),
+		serverFP:  fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)"),
+		port:      fs.Int("port", 0, "local UDP port to bind (0 = random)"),
+		verbose:   fs.Bool("v", false, "verbose logging"),
+	}
+}
+
+// exportEnv puts the effective connection options into the environment so
+// that child processes (ssh's ProxyCommand running "msnw client") inherit
+// them without putting the key on a command line.
+func (nf *nodeFlags) exportEnv() {
+	os.Setenv("MSNW_SERVER", *nf.server)
+	os.Setenv("MSNW_KEY", *nf.linkKey)
+	os.Setenv("MSNW_SERVER_KEY", *nf.serverKey)
+	os.Setenv("MSNW_SERVER_FP", *nf.serverFP)
+}
+
+// newPool binds the shared socket, connects the node and starts the network
+// watcher. The returned stop function releases everything.
+func newPool(nf *nodeFlags) (*pool, func(), error) {
+	quietQUIC()
+	id, err := ident.New()
+	if err != nil {
+		return nil, nil, err
+	}
+	node, err := peer.New(id, *nf.server, *nf.serverKey, *nf.serverFP, *nf.port)
+	if err != nil {
+		return nil, nil, err
+	}
+	node.Verbose = *nf.verbose
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	p := &pool{node: node, linkKey: *nf.linkKey, ctx: ctx, ents: map[string]*entry{}}
+	go p.watchNetwork(ctx)
+	return p, func() { stop(); node.Close() }, nil
+}
+
+// quietQUIC silences quic-go's receive-buffer warning; it is harmless for a
+// tunnel of this size, and sysctl advice lives in the README.
+func quietQUIC() {
 	if os.Getenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING") == "" {
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	}
-	args := netutil.OptionalValueFlag(os.Args[1:], "l", "auto")
+}
+
+// Client reaches services published by msnw export.
+func Client(args []string) {
+	args = netutil.OptionalValueFlag(args, "l", "auto")
 	args = netutil.OptionalValueFlag(args, "socks5", "127.0.0.1:1080")
-	fs := flag.NewFlagSet("msnw-client", flag.ExitOnError)
+	fs := flag.NewFlagSet("msnw client", flag.ExitOnError)
 	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in socks5 mode)")
 	listen := fs.String("l", "", "listen locally (port, :port, host:port, or udp:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
-	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
-	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required")
-	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
-	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
-	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
-	genKey := fs.Bool("gen-key", false, "print a fresh random link key and exit")
-	verbose := fs.Bool("v", false, "verbose logging")
+	nf := addNodeFlags(fs)
 	fs.Parse(args)
 
-	if *genKey {
-		fmt.Println(ident.GenerateKey())
-		return
-	}
-	if *linkKey == "" || (*name == "" && *socks == "") {
-		fmt.Fprintln(os.Stderr, "usage: msnw-client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] [-n NAME]   (-s server, -server-key K)")
+	if *nf.linkKey == "" || (*name == "" && *socks == "") {
+		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] [-n NAME]   (-s server, -server-key K)")
 		os.Exit(2)
 	}
 	log.SetOutput(os.Stderr)
-
-	id, err := ident.New()
+	p, stop, err := newPool(nf)
 	if err != nil {
 		log.Fatal(err)
 	}
-	node, err := peer.New(id, *server, *serverKey, *serverFP, *port)
-	if err != nil {
-		log.Fatal(err)
-	}
-	node.Verbose = *verbose
-	defer node.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	p := &pool{node: node, linkKey: *linkKey, ctx: ctx, ents: map[string]*entry{}}
-	go p.watchNetwork(ctx)
+	ctx := p.ctx
 
 	switch {
 	case *socks != "":
@@ -352,14 +379,24 @@ const udpIdle = 10 * time.Minute
 // runListenUDP forwards datagrams arriving on addr to target on exporter
 // name, one flow per local source address.
 func runListenUDP(ctx context.Context, p *pool, name, target, addr string) {
+	uc, err := listenUDP(addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	serveUDPForward(ctx, p, name, target, uc)
+}
+
+func listenUDP(addr string) (*net.UDPConn, error) {
 	ua, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	uc, err := net.ListenUDP("udp", ua)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return net.ListenUDP("udp", ua)
+}
+
+// serveUDPForward forwards datagrams arriving on uc to target on exporter
+// name, one flow per local source address, until ctx ends.
+func serveUDPForward(ctx context.Context, p *pool, name, target string, uc *net.UDPConn) {
 	go func() { <-ctx.Done(); uc.Close() }()
 	log.Printf("listening on udp %s -> %s:%s", uc.LocalAddr(), name, target)
 
