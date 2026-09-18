@@ -1,81 +1,100 @@
 # msnw — my small network
 
-名前でサービスを公開して、NAT の向こうから P2P で繋ぎに行く小さなトンネル。
+[日本語](README.ja.md)
+
+A small tunnel: publish a service under a name, and reach it peer-to-peer
+from behind NAT.
 
 ```
-        ┌──────────────┐  紹介 / NAT 越え補助 / 最後の手段のリレー
-        │ msnw server  │  (QUIC 制御 :4433, UDP リレー :4434)
+        ┌──────────────┐  introduction / NAT traversal help / relay of last resort
+        │ msnw server  │  (QUIC control :4433, UDP relay :4434)
         └──────┬───────┘
-     登録 ↗           ↖ 問い合わせ
-┌──────────────┐  QUIC (P2P, 直結 or リレー)  ┌──────────────┐
-│ msnw export│ ◀═══════════════════════════▶ │ msnw client  │
-│  -n hogehoge │   1 TCP 接続 = 1 QUIC stream  │              │
-│  -t 1234     │                                │ stdio / -l / │
-└──────┬───────┘                                │   --socks5   │
-       ▼                                        └──────────────┘
+   register ↗          ↖ lookup
+┌──────────────┐  QUIC (P2P, direct or relayed)  ┌──────────────┐
+│ msnw export  │ ◀═════════════════════════════▶ │ msnw client  │
+│  -n hogehoge │   1 TCP connection = 1 stream   │              │
+│  -t 1234     │                                 │ stdio / -l / │
+└──────┬───────┘                                 │   --socks5   │
+       ▼                                         └──────────────┘
    nc -l 1234
 ```
 
-## ビルド
+## Install
+
+Download the archive for your OS / CPU from
+[Releases](https://github.com/ikeji/mysmallnetwork/releases) and unpack it: it
+is a single static binary. On Linux x86_64:
 
 ```
-make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server / export / client / mosh / gen-key サブコマンド)
-make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
-make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
+curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+./msnw -h
 ```
 
-Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENABLED=0` を付けること。
-cgo 付きでビルドすると libc を動的リンクし、古い glibc のホストで
-`GLIBC_2.34' not found` のようなエラーになる。
+With Go installed, `go install github.com/ikeji/mysmallnetwork/cmd/msnw@latest` works too.
 
-## クイックガイド: 手元の ssh / mosh を共有する
-
-自宅の PC(sshd が動いている)に、外出先のノート PC から ssh や mosh したい場合。
-どちらも NAT の奥にいてよく、サーバーを用意する必要はない(公開サーバー
-relay.ikeji.ma を既定で使う)。
-
-**1. 両方の PC にバイナリを置く**
+## Build
 
 ```
-make            # bin/msnw を両方の PC に置く。PATH を通す必要はない
+make            # static binary bin/msnw (CGO_ENABLED=0) with the server / export / client / mosh / gen-key subcommands
+make test       # unit tests + the full NAT simulation matrix (make unit / make natsim / make roam individually)
+make cross      # linux/darwin/windows builds into bin/<os>-<arch>/
 ```
 
-**2. リンクキーを決める**
+Needs Go 1.26 or newer (a quic-go requirement). If you run `go build` yourself,
+set `CGO_ENABLED=0`: a cgo build links libc dynamically and fails on hosts
+with an older glibc (`GLIBC_2.34' not found`).
 
-両方の PC で同じ文字列を使う。以下では `mylonglongsecretkey` とする。
-これを知っている人だけが繋がれるので、推測されにくい長いものにする
-(`msnw gen-key` でランダムに作ってもよい)。
+## Quick guide: share your ssh / mosh
 
-**3. 自宅 PC(sshd 側)で公開する**
+You want to ssh or mosh from a laptop on the road into a PC at home that runs
+sshd. Both can sit behind NAT, and you do not need to run a server: the public
+server relay.ikeji.ma is the default.
+
+**1. Put the binary on both machines**
+
+```
+make            # or download msnw from Releases. It does not need to be on PATH.
+```
+
+**2. Pick a link key**
+
+Use the same string on both machines; below it is `mylonglongsecretkey`. Only
+people who know it can connect, so make it long and hard to guess
+(`msnw gen-key` prints a random one).
+
+**3. Publish on the home PC (the sshd side)**
 
 ```
 msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
 ```
 
-`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲(ssh だけなら `-u` は不要)。
-範囲にしておくと mosh セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
-`home` は好きな名前でよく、リンクキーが違えば他人の `home` とは衝突しない。
-ログに `registered "home"` と出れば準備完了。起動したままにしておく。
+`-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh (drop `-u` if
+you only need ssh). A range lets you open any number of mosh sessions at once
+(each uses one port). `home` is any name you like; a different link key means a
+different namespace, so it never collides with someone else's `home`. Once the
+log says `registered "home"` it is ready. Leave it running.
 
-**4a. ノート PC から mosh する**
+**4a. mosh from the laptop**
 
 ```
 msnw mosh -key mylonglongsecretkey user@home
 ```
 
-これだけでよい。内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を
-起動し、mosh の UDP をトンネルで転送して `mosh-client` を起動する。
-ノート PC には `ssh` と `mosh-client` が、自宅 PC には `mosh-server` が要る。
-ポート範囲を変えるなら `-p 60001:60010` のように指定し、exporter 側の `-u` も合わせる。
+That is all. Internally it starts `mosh-server` over ssh (with msnw itself as
+the ProxyCommand), forwards mosh's UDP through the tunnel and runs
+`mosh-client`. The laptop needs `ssh` and `mosh-client`, the home PC needs
+`mosh-server`. To use another port range pass `-p 60001:60010` and match the
+exporter's `-u`.
 
-**4b. ノート PC から ssh する**
+**4b. ssh from the laptop**
 
 ```
 ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
 ```
 
-ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
-`~/.ssh/config` に書いておくと `ssh home` だけで済む(`msnw mosh` もこの設定を使う):
+The host name `home` is only what ssh displays; the ProxyCommand makes the
+actual path. Put it in `~/.ssh/config` and `ssh home` is enough (`msnw mosh`
+uses the same entry):
 
 ```
 Host home
@@ -83,37 +102,42 @@ Host home
     ProxyCommand /path/to/msnw client -key mylonglongsecretkey -n home
 ```
 
-キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
-`export MSNW_KEY=mylonglongsecretkey` しておいて `-key` を省く。
+The key can also come from the `MSNW_KEY` environment variable, so if you do
+not want it on a command line, `export MSNW_KEY=mylonglongsecretkey` and drop
+`-key`.
 
-**別解: ローカルポートに出す**
+**Alternative: a local port**
 
-ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
+Without a ProxyCommand, keep the laptop's port 2222 connected to port 22 at
+home:
 
 ```
-msnw client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
-ssh -p 2222 user@localhost                             # scp や rsync も同じ要領
+msnw client -key mylonglongsecretkey -n home -l 2222   # leave it running
+ssh -p 2222 user@localhost                             # scp and rsync work the same way
 ```
 
-**動作の見方**
+**What to look for**
 
-- 初回接続時に client のログに `via direct ...` か `via relay ...` と出る。`direct` なら
-  NAT 越えの直結、`relay` ならサーバー経由(暗号化は変わらない)。
-- Wi-Fi を切り替えるなどしてネットワークが変わっても、ssh も mosh も数秒止まった後に
-  続きから動く(`session ... resumed` と出る)。
+- On the first connection the client logs `via direct ...` or `via relay ...`.
+  `direct` means the NAT traversal worked; `relay` means the server is
+  forwarding packets (encryption is the same either way).
+- When the network changes (switching Wi-Fi, for example), both ssh and mosh
+  pause for a few seconds and then carry on where they were (the log says
+  `session ... resumed`).
 
-## 使い方(詳細)
+## Usage in detail
 
-鍵は 2 種類、どちらも共有鍵:
+There are two keys, both shared secrets:
 
-- **リンクキー** `-key`(`$MSNW_KEY`): exporter と client が共有する。同じでないと繋がらない。
-  server は知らない。`msnw gen-key` で生成できる。
-- **サーバーキー** `-server-key`(`$MSNW_SERVER_KEY`): server を勝手に使われないための入場券。
-  server 側で未設定なら誰でも使える。
+- **Link key** `-key` (`$MSNW_KEY`): shared between exporter and client; they
+  only connect if it matches. The server never sees it. `msnw gen-key` makes one.
+- **Server key** `-server-key` (`$MSNW_SERVER_KEY`): an admission ticket that
+  keeps strangers off your server. If the server is started without one,
+  anyone may use it.
 
-exporter / client は既定で公開サーバー `relay.ikeji.ma:4433`(サーバーキー無し)を使うので、
-バイナリを落としてリンクキーを決めればすぐ使える。自前のサーバーを使うときは
-`-s host:port`(または `$MSNW_SERVER`)で指す。
+Exporter and client default to the public server `relay.ikeji.ma:4433` (no
+server key), so a downloaded binary plus a link key is all you need. To use
+your own server, point at it with `-s host:port` (or `$MSNW_SERVER`).
 
 ### server
 
@@ -121,195 +145,218 @@ exporter / client は既定で公開サーバー `relay.ikeji.ma:4433`(サーバ
 msnw server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
 ```
 
-UDP の 2 ポートを外から到達可能にしておく。`-key` を指定すると鍵を保存して
-フィンガープリントが再起動をまたいで固定される。起動時に表示される
-`fingerprint: sha256:...` を exporter / client の `-server-fp`(または
-`$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる。
+Both UDP ports must be reachable from outside. With `-key` the private key is
+saved so the fingerprint stays the same across restarts; the
+`fingerprint: sha256:...` printed at startup can be pinned by exporter and
+client with `-server-fp` (or `$MSNW_SERVER_FP`).
 
-### exporter
+### export
 
 ```
-msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 (TCP) を hogehoge として公開
-msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
-msnw export -n home -t 22 -u 60001-60999           # -t は TCP、-u は UDP。範囲も書ける(mosh 用)
-msnw export -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
+msnw export -key LINKKEY -n hogehoge -t 1234       # publish localhost:1234 (TCP) as hogehoge
+msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # several targets; the first is the default
+msnw export -n home -t 22 -u 60001-60999           # -t is TCP, -u is UDP; ranges allowed (mosh)
+msnw export -n exit --all                          # forward to any host:port (exit-node style)
 ```
 
-`-t`(TCP)と `-u`(UDP)はそれぞれ `port`(= localhost:port)、`host:port`、または
-`lo-hi` / `host:lo-hi` のポート範囲。
-`--all` は両プロトコルで任意の宛先を許し、`-t` と併用するとその先頭が既定ターゲットになる。
+`-t` (TCP) and `-u` (UDP) take `port` (meaning localhost:port), `host:port`, or
+a range `lo-hi` / `host:lo-hi`. `--all` allows any destination on both
+protocols; combined with `-t`, the first `-t` is the default target.
 
 ### client
 
 ```
-msnw client -key LINKKEY -n hogehoge    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
-                                        # 以下 -key は $MSNW_KEY にあるものとして省略
-msnw client -n hogehoge:8080            # exporter 側の別ポートを指定
-msnw client -n exit:example.com:80      # --all な exporter 経由で任意ホストへ
+msnw client -key LINKKEY -n hogehoge    # pipe stdin/stdout (nc style, ssh ProxyCommand)
+                                        # below, -key is assumed to be in $MSNW_KEY
+msnw client -n hogehoge:8080            # another port on the exporter
+msnw client -n exit:example.com:80      # any host through an --all exporter
 
-msnw client -n hogehoge -l              # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
-msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定ターゲット
-msnw client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
-msnw client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw client -n hogehoge -l              # listen on 127.0.0.1 on the exporter's default port number
+msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 -> hogehoge's default target
+msnw client -n hogehoge:8080 -l :5000   # listen on all interfaces
+msnw client -n hogehoge:60001 -l udp:60001   # forward UDP (one flow per source address)
 
-msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5
-msnw client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
+msnw client --socks5                    # SOCKS5 on 127.0.0.1:1080
+msnw client --socks5 :1080 -n exit      # unknown hosts go out through exit
 ```
 
-SOCKS5 モードでの宛先ホストの解釈:
+How SOCKS5 destinations are interpreted:
 
-| 宛先ホスト               | 行き先                                    |
-|--------------------------|-------------------------------------------|
-| `hogehoge`               | exporter hogehoge の、宛先ポート           |
-| `hogehoge.msnw`          | 同上                                       |
-| `db.hogehoge.msnw`       | exporter hogehoge から `db:<port>` へ      |
-| それ以外(FQDN / IP)    | `-n` で指定した既定 exporter から外へ      |
+| destination host        | goes to                                      |
+|-------------------------|----------------------------------------------|
+| `hogehoge`              | exporter hogehoge, the requested port        |
+| `hogehoge.msnw`         | same                                         |
+| `db.hogehoge.msnw`      | `db:<port>` as seen from exporter hogehoge   |
+| anything else (FQDN/IP) | the default exporter given with `-n`         |
 
-`.msnw` 形式を使うときは `curl --socks5-hostname` / `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'` のように
-名前解決をプロキシに任せる設定にする。
+For the `.msnw` forms let the proxy resolve names, e.g. `curl --socks5-hostname`
+or `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'`.
 
-例: ssh
+Example: ssh
 
 ```
 ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
 ```
 
-例: mosh(`msnw mosh`)
+Example: mosh (`msnw mosh`)
 
 ```
-msnw export -key K -n home -t 22 -u 60001-60999   # sshd を既定に、mosh 用 UDP ポート範囲も許可
-msnw mosh -key K user@home                      # -p で mosh のポート範囲を変えられる(既定 60001:60999)
+msnw export -key K -n home -t 22 -u 60001-60999   # sshd as the default target, plus mosh's UDP range
+msnw mosh -key K user@home                      # -p changes the port range (default 60001:60999)
 ```
 
-`msnw mosh` は ssh(ProxyCommand に自分自身のパスを渡す)で `mosh-server` を
-127.0.0.1 限定で起動し、ローカル UDP ポートを exporter 側の同じポートへ同一プロセス内で
-転送してから `mosh-client` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
-`-ssh "..."` か `MSNW_MOSH_SSH` を使う。リンクキーは環境変数で子プロセスに渡すので
-コマンドラインに出ない。
+`msnw mosh` starts `mosh-server` over ssh (passing its own executable as the
+ProxyCommand) bound to 127.0.0.1 only, forwards a local UDP port to the same
+port on the exporter side inside the same process, then runs `mosh-client`
+against 127.0.0.1. Extra ssh options go in `-ssh "..."` or `MSNW_MOSH_SSH`. The
+link key reaches the child process through the environment, not the command
+line.
 
-## 仕組み
+## How it works
 
-- **TCP セッションの再開**: 1 TCP 接続 = 1 QUIC ストリームだが、ストリームの上に
-  再送バッファと ACK を持つ薄い層を挟み、トンネルが張り直されても TCP 接続を引き継ぐ
-  (「ローミング」の節を参照)。
-- **UDP**: `-l udp:PORT` で受けたデータグラムは、QUIC の datagram 拡張(RFC 9221)で運ぶ。
-  1 パケットに収まらないものはフロー用ストリーム上に長さ付きで送る。フローは
-  ローカルの送信元アドレスごとに 1 本で、10 分無通信で閉じる。
-- **1 ソケット共用**: 各ノードは 1 つの UDP ソケットで server との制御 QUIC 接続と
-  peer との QUIC 接続を両方さばく。server が制御接続で観測した「外から見えるアドレス」が
-  そのまま P2P で使う NAT マッピングになる(STUN 相当)。
-- **紹介**: client が `-n` の名前を問い合わせると、server は exporter に client の候補
-  アドレス(反射アドレス + LAN アドレス)を、client に exporter の候補を渡す。
-- **ホールパンチ**: 両側が相手の全候補へ小さな UDP パケットを撃ちつつ、client が
-  全候補へ並行して QUIC を dial する。最初に握手が終わったものを採用。client は
-  届いたパンチの送信元アドレスも候補に加える(exporter が symmetric NAT の奥でも、
-  client 側が full cone なら繋がる)。
-- **リレー**: 1.5 秒経っても直結できなければ server のリレーポート経由で QUIC を張る。
-  リレーは UDP をそのまま転送するだけなので、暗号化は end-to-end のまま。
-  対称 NAT 同士などはここに落ちる。
-- **名前空間**: exporter は名前ではなく `HMAC(リンクキー, 名前)` で登録し、client も同じ値で
-  問い合わせる。server は名前も鍵も知らない。リンクキーが違えば同じ名前でも衝突しない。
-- **認証**: 共有鍵の証明はすべて「その TLS セッションの keying material に対する HMAC」で、
-  他の接続に再送・転用できない。server へはサーバーキーで、peer 間はリンクキーで
-  QUIC 接続直後の最初のストリーム上で双方向に証明する。exporter は証明が済むまで
-  CONNECT を受けず、client も済むまでデータを送らない。server から受け取った公開鍵
-  フィンガープリントのピン留めも残しており、紹介されていない相手の TLS を手前で弾く。
+- **Resumable TCP sessions**: one TCP connection is one QUIC stream, but a thin
+  layer on top of the stream keeps a replay buffer and ACKs, so a TCP
+  connection survives the tunnel being re-established (see "Roaming").
+- **UDP**: datagrams received on `-l udp:PORT` travel as QUIC datagrams
+  (RFC 9221). Anything too large for one packet goes length-framed over the
+  flow's own stream. There is one flow per local source address; it closes
+  after 10 minutes of silence.
+- **One socket**: each node uses a single UDP socket both for the control
+  connection to the server and for peer connections, so the public address the
+  server observes on the control connection is exactly the NAT mapping the
+  peers punch through (STUN-like).
+- **Introduction**: when the client looks up the name given with `-n`, the
+  server hands the exporter the client's candidate addresses (reflexive plus
+  LAN) and the client the exporter's.
+- **Hole punching**: both sides send small UDP packets to all of the other's
+  candidates while the client dials QUIC to all of them in parallel; the first
+  handshake to finish wins. The client also treats the source address of any
+  punch it receives as a candidate, so an exporter behind a symmetric NAT is
+  still reachable when the client side is a full cone.
+- **Relay**: if no direct connection is up after 1.5 seconds, QUIC is set up
+  through the server's relay port. The relay forwards UDP verbatim, so
+  encryption stays end-to-end. Symmetric-to-symmetric NATs end up here.
+- **Namespaces**: the exporter registers `HMAC(link key, name)` rather than the
+  name, and the client looks up the same value. The server learns neither the
+  name nor the key, and different keys never collide even for the same name.
+- **Authentication**: every proof of a shared key is an HMAC over that TLS
+  session's exported keying material, so it cannot be replayed or forwarded to
+  another connection. The server key is proven to the server; the link key is
+  proven in both directions on the first stream of every peer connection. The
+  exporter accepts no CONNECT and the client sends no data before that. The
+  public-key fingerprints exchanged through the server are still pinned, which
+  rejects TLS from anyone the server did not introduce.
 
-## ネットワークが変わったとき(ローミング)
+## Roaming (when the network changes)
 
-client は 2 秒ごとに自分のアドレス一覧を見ていて、変化したら peer 接続と server 接続を
-即座に捨てて張り直す。アドレスが変わらないのに経路だけ死んだ場合(NAT のマッピングが
-消えた等)は、QUIC のアイドルタイムアウト(30 秒、キープアライブ 10 秒)で検知する。
+The client checks its own address list every 2 seconds; on a change it drops
+its peer and server connections immediately and redials. If the path dies
+without an address change (a NAT mapping expired, say), the QUIC idle timeout
+catches it (30 seconds, keepalive every 10).
 
-張り直しをまたいでも TCP 接続は切れない。TCP 1 本ごとに「再開できるセッション」を
-挟んでいるためで(`internal/resume`):
+TCP connections survive the redial thanks to the resumable session layer
+(`internal/resume`):
 
-- CONNECT 時にトークンを発行し、両端が送受信したバイト数を数え、相手がまだ受け取ったと
-  確認できていない分を再送バッファに持つ(ACK は 64 KiB ごと、または 1 秒ごと)。
-- トンネルが切れても両端のローカルソケットは閉じず、client が新しい接続の上で
-  `RESUME トークン 受信量` を送る。exporter は自分の受信量を返し、双方が相手の
-  受け取っていない分だけ再送して続きから流す。
-- 再開を 5 分待って来なければ諦めて閉じる。ssh 側からは「数秒止まって続きから動く」ように
-  見える。ssh の `ServerAliveInterval` を短くしていると、その間に ssh 自身が切ることがある。
+- CONNECT issues a token. Both ends count the payload bytes they sent and
+  received and keep whatever the peer has not acknowledged in a replay buffer
+  (ACKs every 64 KiB or every second).
+- When the tunnel breaks, neither end closes its local socket. The client sends
+  `RESUME <token> <received>` on a fresh connection, the exporter answers with
+  its own count, and each side retransmits only what the other missed.
+- A session that waits more than 5 minutes for a resume is closed. To ssh this
+  looks like a pause of a few seconds. A short `ServerAliveInterval` in ssh can
+  make ssh itself give up during that pause.
 
-stdio(ProxyCommand)、`-l`、SOCKS5 の全モードで同じ層を使う。UDP フローは次のパケットで
-張り直され、mosh はそれで数秒で復帰する。
+stdio (ProxyCommand), `-l` and SOCKS5 all use the same layer. UDP flows are
+recreated on the next packet, which is how mosh comes back within seconds.
 
-`make roam`(`test/natsim.sh cone -- test/roam.sh`)で、セッション途中に client 側の LAN
-アドレスと NAT の外側アドレスを変え、UDP フローの復旧時間と、TCP 接続の連番エコーが
-欠落・重複なく続くことを確認している。実際の sshd と ssh を siteA / siteB に置いて
-コマンド実行中にネットワークを変えた場合も、出力が途切れず終了コード 0 で完走する。
+`make roam` (`test/natsim.sh cone -- test/roam.sh`) changes the client site's
+LAN address and NAT WAN address mid-session and checks the UDP recovery time
+and that a numbered TCP echo continues without loss or duplication. A real sshd
+and ssh placed in siteA / siteB, with the network changed during a running
+command, finish with all output and exit code 0.
 
-## セキュリティモデル
+## Security model
 
-- server は信用しない。server(または偽 server)が乗っ取られてもできるのは、接続の妨害と
-  「どのハッシュがいつどこから繋いだか」の観察まで。両側に別々の TLS を張って中継しようと
-  しても、リンクキーの証明はセッションごとに違うので流用できない。
-- リンクキーを持つ人は client にも exporter にもなれる(役割は対称)。鍵を共有した仲間内では
-  名前のなりすましが可能なので、信用単位ごとに鍵を分ける。「この人はこのポートだけ」は
-  鍵と exporter を分けて表現する。
-- server はハッシュを見られるので、名前が推測できて鍵が短いと総当たりできる。リンクキーは
-  `--gen-key` で生成したものを使う。
-- server は増幅器・反射器にならないようにしてある。制御ポートは Retry で送信元を検証してから
-  ハンドシェイクする(偽装した送信元には送った分より少ないバイトしか返らない)。リレーは
-  hello に応答せず、紹介済みセッションの hello も制御接続で観測した IP からのものしか
-  受け付けないので、偽装アドレスを転送先に登録することはできない。転送は 1 対 1。
-- server 自身は外向きに接続しない。任意の宛先へ出られるのは `--all` の exporter だけで、
-  それはリンクキーを持つ相手にしか使えない。
-- 失効は鍵の配り直し。
-- 1 プロセス 1 リンクキー。SOCKS5 モードで鍵の違う exporter 群をまたぐ必要が出たら、
-  優先度付きの複数鍵に拡張する(client 側は名前ごとに鍵を引く構造にしてある)。
+- The server is not trusted. A compromised (or impersonated) server can only
+  disrupt connections and observe which hashes connected when and from where.
+  Terminating TLS on both sides and forwarding does not work: the link-key
+  proof is different for every session.
+- Whoever holds the link key can be either client or exporter (the roles are
+  symmetric), so within a group sharing a key, names can be spoofed. Use one key
+  per trust boundary; "this person only gets this port" is expressed with a
+  separate key and exporter.
+- The server sees the name hashes, so a guessable name with a short key can be
+  brute-forced. Use keys from `msnw gen-key`.
+- The server is neither an amplifier nor a reflector. The control port
+  validates the source address with a Retry before the handshake (a spoofed
+  source gets back fewer bytes than it sent). The relay never answers hellos,
+  and accepts a session's hello only from the IP seen on that party's control
+  connection, so a spoofed address cannot be bound as a relay endpoint.
+  Forwarding is one to one.
+- The server never opens outbound connections. Only an `--all` exporter can
+  reach arbitrary destinations, and only for holders of its link key.
+- Revocation means handing out a new key.
+- One link key per process. If SOCKS5 ever needs to span exporters with
+  different keys, this extends to a prioritized list (the client already looks
+  keys up per name).
 
-## NAT 越えのテスト(test/natsim.sh)
+## NAT traversal tests (test/natsim.sh)
 
-Linux のネットワーク名前空間で「公開サーバー + NAT の奥の拠点 2 つ」を作り、
-本物のホールパンチとリレーフォールバックを検証する。sudo 不要(user namespace で動く。
-uid は root ではなく自分のままマップし、`unshare --keep-caps` で capability だけ保つ)。
-`nft`(パッケージ `nftables`)と `iproute2` が必要。
+Builds "a public server plus two sites behind NAT" out of Linux network
+namespaces and exercises real hole punching and the relay fallback. No sudo
+needed: it runs in a user namespace (mapped to your own uid, not root, keeping
+only the capabilities via `unshare --keep-caps`). Needs `nft` (package
+`nftables`) and `iproute2`.
 
 ```
 make
-test/natsim.sh cone        # 一般的なルータ相当。直結を期待
-test/natsim.sh symmetric   # ポートが宛先ごとに変わる NAT。リレーを期待
-test/natsim.sh fullcone    # 送信元を問わず受け付ける NAT(UPnP でポートを開けた状態相当)
-test/natsim.sh cone:symmetric   # 片側ずつ指定(siteA:siteB)
-test/natsim.sh cone -- bash   # 構築だけして中でシェルを開く(ip netns exec siteA ... 等)
-NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT(下記)
+test/natsim.sh cone        # a typical router; expects a direct connection
+test/natsim.sh symmetric   # ports change per destination; expects the relay
+test/natsim.sh fullcone    # accepts from any source (like a UPnP port mapping)
+test/natsim.sh cone:symmetric   # one type per side (siteA:siteB)
+test/natsim.sh cone -- bash   # just build the topology and open a shell (ip netns exec siteA ...)
+NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # a NAT that does not drop unsolicited WAN input (see below)
 ```
 
-構成: `siteA 192.168.1.10 ─ natA(10.0.0.2) ─ br0 ─ natB(10.0.0.3) ─ siteB 192.168.2.10`、
-サーバーは 10.0.0.1。exporter が siteA、client が siteB で動く。
+Topology: `siteA 192.168.1.10 ─ natA(10.0.0.2) ─ br0 ─ natB(10.0.0.3) ─ siteB 192.168.2.10`,
+server at 10.0.0.1. The exporter runs in siteA, the client in siteB.
 
-分かっていること:
+Findings:
 
-- cone(masquerade)+ WAN 側で未承諾パケットを INPUT で drop する普通のルータ同士なら直結する。
-- symmetric(`masquerade fully-random`)は直結できずリレーになる。cone と symmetric の
-  混合(どちらの向きでも)も同様にリレーになる。Linux の masquerade はフィルタが
-  address+port 依存(port-restricted cone)なので、symmetric 側の新しいポートを
-  cone 側が受け付けられない。
-- full cone が片側にあれば、相手が symmetric でも直結できる。exporter が symmetric で
-  client が full cone の場合、server が見た exporter のポートは使えないが、exporter の
-  パンチが client に届くので、client はその送信元アドレスを候補として学習して dial する。
-  full cone は masquerade では作れないので、シミュレータでは対象ポートへの静的 DNAT で
-  代用している(siteA は UDP 40001、siteB は 40002 を `-port` で固定)。
+- Two ordinary routers (cone masquerade that drops unsolicited packets in the
+  WAN INPUT chain) connect directly.
+- Symmetric (`masquerade fully-random`) cannot connect directly and uses the
+  relay, and so does any cone/symmetric mix in either direction: Linux
+  masquerade filters by address and port (port-restricted cone), so the cone
+  side rejects the symmetric side's new port.
+- A full cone on either side makes a direct connection possible even against a
+  symmetric peer. With a symmetric exporter and a full-cone client, the port the
+  server saw for the exporter is useless, but the exporter's punch reaches the
+  client, which learns the source address and dials it. Masquerade cannot make
+  a full cone, so the simulator uses a static DNAT of the node's port instead
+  (siteA pins UDP 40001 and siteB 40002 with `-port`).
 
-| siteA(exporter) : siteB(client) | 結果 |
+| siteA (exporter) : siteB (client) | result |
 |---|---|
-| cone : cone | 直結 |
-| fullcone : cone / cone : fullcone / fullcone : fullcone | 直結 |
-| fullcone : symmetric | 直結 |
-| symmetric : fullcone | 直結(パンチから学習した候補) |
-| cone : symmetric / symmetric : cone / symmetric : symmetric | リレー |
-- WAN 側 INPUT を drop しない NAT 同士では、相手のパンチが先に届くと conntrack に
-  受信フローとして残り、自分の送信フローに同じポートを再利用してもらえなくなる
-  (mapping が endpoint-independent でなくなる)。両側が同時にパンチする以上これは
-  避けられず、リレーに落ちる。
+| cone : cone | direct |
+| fullcone : cone / cone : fullcone / fullcone : fullcone | direct |
+| fullcone : symmetric | direct |
+| symmetric : fullcone | direct (candidate learned from the punch) |
+| cone : symmetric / symmetric : cone / symmetric : symmetric | relay |
 
-## 注意
+- Between two NATs that do not drop unsolicited WAN input, a punch that arrives
+  first is recorded by conntrack as an inbound flow, after which the NAT will
+  not reuse the same port for its own outbound flow (the mapping stops being
+  endpoint-independent). With both sides punching at once this cannot be
+  avoided, so those fall back to the relay.
 
-- 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
-  漏れるものは無いが、妨害を避けたいなら server を `-key` で鍵固定し `-server-fp` でピン留めする。
-- Linux で UDP 受信バッファが小さいと quic-go が警告する。高スループットが要るなら
-  `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
-- デバッグ用に `MSNW_FORCE_RELAY=1` で client を直結せずリレーのみにできる。
-  `-v` で dial の失敗理由を表示。
+## Notes
+
+- The server certificate is not verified by default. Landing on a fake server
+  leaks nothing (the peers just fail to connect), but to rule out disruption,
+  pin the server with `-key` on the server side and `-server-fp` on the nodes.
+- On Linux, quic-go warns when the UDP receive buffer is small. For high
+  throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
+- For debugging, `MSNW_FORCE_RELAY=1` makes the client skip direct paths and
+  use only the relay; `-v` shows why each dial failed.
