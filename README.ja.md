@@ -18,6 +18,18 @@
    nc -l 1234
 ```
 
+## インストール
+
+[Releases](https://github.com/ikeji/mysmallnetwork/releases) から自分の OS / CPU 向けの
+アーカイブを落として展開するだけ(静的バイナリ 1 つ)。Linux x86_64 なら:
+
+```
+curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+./msnw -h
+```
+
+Go が入っていれば `go install github.com/ikeji/mysmallnetwork/cmd/msnw@latest` でもよい。
+
 ## ビルド
 
 ```
