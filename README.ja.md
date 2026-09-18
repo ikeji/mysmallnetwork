@@ -50,9 +50,9 @@ relay.ikeji.ma を既定で使う)。
 
 **1. 両方の PC にバイナリを置く**
 
-```
-make            # bin/msnw を両方の PC に置く。PATH を通す必要はない
-```
+[Releases](https://github.com/ikeji/mysmallnetwork/releases) から、それぞれの PC の
+OS / CPU 向けのアーカイブを落として展開する(「インストール」の節を参照)。
+`msnw` 1 ファイルだけでよく、PATH を通す必要もない。ソースから `make` で作ってもよい。
 
 **2. リンクキーを決める**
 

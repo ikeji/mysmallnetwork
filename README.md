@@ -52,9 +52,10 @@ server relay.ikeji.ma is the default.
 
 **1. Put the binary on both machines**
 
-```
-make            # or download msnw from Releases. It does not need to be on PATH.
-```
+Download the archive for each machine's OS / CPU from
+[Releases](https://github.com/ikeji/mysmallnetwork/releases) and unpack it
+(see [Install](#install)). The single `msnw` file is all you need; it does not
+have to be on PATH. Building from source with `make` works too.
 
 **2. Pick a link key**
 
