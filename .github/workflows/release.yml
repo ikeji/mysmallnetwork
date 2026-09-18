@@ -25,9 +25,9 @@ jobs:
           for d in bin/*-*/; do
             t=$(basename "$d")                      # e.g. linux-amd64
             if [ -f "$d/msnw.exe" ]; then
-              (cd "$d" && zip -q "../../dist/msnw-${GITHUB_REF_NAME}-$t.zip" msnw.exe)
+              (cd "$d" && zip -q "../../dist/msnw-$t.zip" msnw.exe)
             else
-              tar -C "$d" -czf "dist/msnw-${GITHUB_REF_NAME}-$t.tar.gz" msnw
+              tar -C "$d" -czf "dist/msnw-$t.tar.gz" msnw
             fi
           done
           (cd dist && sha256sum * > SHA256SUMS)
