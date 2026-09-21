@@ -460,7 +460,8 @@ func serveUDPForward(ctx context.Context, p *pool, name, target string, uc *net.
 
 // resolveHost maps a SOCKS destination to (exporter, target).
 //
-//	NAME              -> exporter NAME, port as given
+//	NAME              -> exporter NAME, "~port": the port is only a hint, so a
+//	                     single-target exporter (a service) ignores it
 //	NAME.msnw         -> same
 //	host.NAME.msnw    -> exporter NAME, target host:port (needs --all or an exact -t)
 //	anything else     -> default exporter (-n), target host:port
@@ -472,10 +473,10 @@ func resolveHost(host string, port int, def string) (name, target string, err er
 		if i := strings.LastIndex(h, "."); i >= 0 {
 			return h[i+1:], net.JoinHostPort(h[:i], ps), nil
 		}
-		return h, ps, nil
+		return h, "~" + ps, nil
 	}
 	if !strings.Contains(h, ".") && net.ParseIP(h) == nil {
-		return h, ps, nil
+		return h, "~" + ps, nil
 	}
 	if def == "" {
 		return "", "", fmt.Errorf("no route for %s (use NAME, NAME.msnw, host.NAME.msnw, or pass -n DEFAULT)", host)

@@ -65,12 +65,25 @@ func parseTarget(s string) (target, error) {
 	return target{host: host, lo: l, hi: h}, nil
 }
 
-// resolve maps a client's request ("" = default, "port", or "host:port") to
-// a "host:port" for proto ("tcp" or "udp").
+// resolve maps a client's request to a "host:port" for proto ("tcp" or
+// "udp"). Requests are "" (default), "port", "host:port", or "~port": a port
+// the client did not choose itself (SOCKS5 always sends one, e.g. 80 for
+// http://NAME/). A "~port" that is not exported still reaches an exporter
+// that publishes exactly one target, because such a name denotes a service,
+// not a host.
 func (p *policy) resolve(proto, req string) (string, error) {
 	targets := p.tcp
 	if proto == "udp" {
 		targets = p.udp
+	}
+	if hint, ok := strings.CutPrefix(req, "~"); ok {
+		if t, err := p.resolve(proto, hint); err == nil {
+			return t, nil
+		} else if len(targets) == 1 && !p.all {
+			return targets[0].String(), nil
+		} else {
+			return "", err
+		}
 	}
 	if req == "" {
 		if len(targets) == 0 {

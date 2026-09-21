@@ -9,8 +9,8 @@ func TestResolveHost(t *testing.T) {
 		def, name, target string
 		ok                bool
 	}{
-		{"hogehoge", 22, "", "hogehoge", "22", true},
-		{"HogeHoge.msnw", 22, "", "hogehoge", "22", true},
+		{"hogehoge", 22, "", "hogehoge", "~22", true},
+		{"HogeHoge.msnw", 22, "", "hogehoge", "~22", true},
 		{"db.hogehoge.msnw", 5432, "", "hogehoge", "db:5432", true},
 		{"10.0.0.7.hogehoge.msnw", 80, "", "hogehoge", "10.0.0.7:80", true},
 		{"example.com", 443, "", "", "", false},

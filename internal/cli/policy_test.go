@@ -42,6 +42,28 @@ func TestPolicyResolve(t *testing.T) {
 			t.Errorf("resolve(%s, %q, all=%v) = %q, %v; want %q ok=%v", c.proto, c.req, c.all, got, err, c.want, c.ok)
 		}
 	}
+	// "~port" hints from SOCKS5: a single-target exporter is a service and
+	// ignores the port; several targets or --all make it a host, where the
+	// port must match.
+	svc := &policy{tcp: mk("8765")}
+	for _, req := range []string{"~80", "~443", "~8765"} {
+		if got, err := svc.resolve("tcp", req); err != nil || got != "localhost:8765" {
+			t.Errorf("service resolve(%q) = %q, %v", req, got, err)
+		}
+	}
+	if _, err := svc.resolve("tcp", "80"); err == nil {
+		t.Error("an explicit wrong port must still fail on a service")
+	}
+	p.all = false
+	if got, err := p.resolve("tcp", "~80"); err != nil || got != "10.0.0.5:80" {
+		t.Errorf("host resolve(~80) = %q, %v", got, err)
+	}
+	if _, err := p.resolve("tcp", "~81"); err == nil {
+		t.Error("a host with several targets must reject an unexported hinted port")
+	}
+	if got, err := (&policy{tcp: mk("8765"), all: true}).resolve("tcp", "~80"); err != nil || got != "localhost:80" {
+		t.Errorf("--all resolve(~80) = %q, %v", got, err)
+	}
 	if _, err := (&policy{all: true}).resolve("tcp", ""); err == nil {
 		t.Error("expected error: no default target")
 	}

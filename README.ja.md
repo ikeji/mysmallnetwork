@@ -174,10 +174,15 @@ SOCKS5 モードでの宛先ホストの解釈:
 
 | 宛先ホスト               | 行き先                                    |
 |--------------------------|-------------------------------------------|
-| `hogehoge`               | exporter hogehoge の、宛先ポート           |
+| `hogehoge`               | exporter hogehoge の、宛先ポート (*)       |
 | `hogehoge.msnw`          | 同上                                       |
 | `db.hogehoge.msnw`       | exporter hogehoge から `db:<port>` へ      |
 | それ以外(FQDN / IP)    | `-n` で指定した既定 exporter から外へ      |
+
+(*) exporter が TCP ターゲットを 1 つだけ公開している場合(`msnw export -n web -t 8765`)、
+その名前はサービスを指すとみなしてポートを無視するので、`http://web/` でそのまま繋がる。
+`-t` が複数、または `--all` のときは名前はホストを指し、ポートでターゲットを選ぶ。
+これは SOCKS5 だけの扱いで、`-n web:80` のように明示した場合は厳密なまま。
 
 `.msnw` 形式を使うときは `curl --socks5-hostname` / `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'` のように
 名前解決をプロキシに任せる設定にする。

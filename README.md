@@ -185,10 +185,15 @@ How SOCKS5 destinations are interpreted:
 
 | destination host        | goes to                                      |
 |-------------------------|----------------------------------------------|
-| `hogehoge`              | exporter hogehoge, the requested port        |
+| `hogehoge`              | exporter hogehoge, the requested port (*)    |
 | `hogehoge.msnw`         | same                                         |
 | `db.hogehoge.msnw`      | `db:<port>` as seen from exporter hogehoge   |
 | anything else (FQDN/IP) | the default exporter given with `-n`         |
+
+(*) If the exporter publishes exactly one TCP target (`msnw export -n web -t 8765`),
+the name denotes a service and the port is ignored, so `http://web/` works.
+With several `-t` or `--all` the name denotes a host and the port selects the
+target. This only applies to SOCKS5; an explicit `-n web:80` stays strict.
 
 For the `.msnw` forms let the proxy resolve names, e.g. `curl --socks5-hostname`
 or `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'`.
