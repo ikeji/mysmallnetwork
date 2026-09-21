@@ -177,7 +177,7 @@ msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 -> hogehoge's default t
 msnw client -n hogehoge:8080 -l :5000   # listen on all interfaces
 msnw client -n hogehoge:60001 -l udp:60001   # forward UDP (one flow per source address)
 
-msnw client --socks5                    # SOCKS5 on 127.0.0.1:1080
+msnw client --socks5                    # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
 msnw client --socks5 :1080 -n exit      # unknown hosts go out through exit
 ```
 
@@ -188,12 +188,17 @@ How SOCKS5 destinations are interpreted:
 | `hogehoge`              | exporter hogehoge, the requested port (*)    |
 | `hogehoge.msnw`         | same                                         |
 | `db.hogehoge.msnw`      | `db:<port>` as seen from exporter hogehoge   |
-| anything else (FQDN/IP) | the default exporter given with `-n`         |
+| anything else (FQDN/IP) | the default exporter given with `-n`; without `-n`, a direct connection from this machine |
 
 (*) If the exporter publishes exactly one TCP target (`msnw export -n web -t 8765`),
 the name denotes a service and the port is ignored, so `http://web/` works.
 With several `-t` or `--all` the name denotes a host and the port selects the
 target. This only applies to SOCKS5; an explicit `-n web:80` stays strict.
+
+Because everything else is reached directly, the proxy can stay configured in
+a browser all the time. It listens on 127.0.0.1 by default; binding another
+address (`--socks5 :1080`) lets other machines use it, direct connections
+included.
 
 For the `.msnw` forms let the proxy resolve names, e.g. `curl --socks5-hostname`
 or `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'`.

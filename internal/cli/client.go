@@ -458,30 +458,30 @@ func serveUDPForward(ctx context.Context, p *pool, name, target string, uc *net.
 	}
 }
 
-// resolveHost maps a SOCKS destination to (exporter, target).
+// resolveHost maps a SOCKS destination to (exporter, target). An empty
+// exporter name means "connect directly from this machine" to target.
 //
 //	NAME              -> exporter NAME, "~port": the port is only a hint, so a
 //	                     single-target exporter (a service) ignores it
 //	NAME.msnw         -> same
 //	host.NAME.msnw    -> exporter NAME, target host:port (needs --all or an exact -t)
-//	anything else     -> default exporter (-n), target host:port
-func resolveHost(host string, port int, def string) (name, target string, err error) {
+//	anything else     -> the default exporter (-n) if given, otherwise direct
+//
+// "localhost" is never taken for an exporter name.
+func resolveHost(host string, port int, def string) (name, target string) {
 	ps := strconv.Itoa(port)
 	h := strings.TrimSuffix(strings.ToLower(host), ".")
 	if strings.HasSuffix(h, ".msnw") {
 		h = strings.TrimSuffix(h, ".msnw")
 		if i := strings.LastIndex(h, "."); i >= 0 {
-			return h[i+1:], net.JoinHostPort(h[:i], ps), nil
+			return h[i+1:], net.JoinHostPort(h[:i], ps)
 		}
-		return h, "~" + ps, nil
+		return h, "~" + ps
 	}
-	if !strings.Contains(h, ".") && net.ParseIP(h) == nil {
-		return h, "~" + ps, nil
+	if !strings.Contains(h, ".") && net.ParseIP(h) == nil && h != "localhost" {
+		return h, "~" + ps
 	}
-	if def == "" {
-		return "", "", fmt.Errorf("no route for %s (use NAME, NAME.msnw, host.NAME.msnw, or pass -n DEFAULT)", host)
-	}
-	return def, net.JoinHostPort(host, ps), nil
+	return def, net.JoinHostPort(host, ps)
 }
 
 func runSocks(ctx context.Context, p *pool, listen, def string) {
@@ -494,11 +494,16 @@ func runSocks(ctx context.Context, p *pool, listen, def string) {
 		log.Fatal(err)
 	}
 	go func() { <-ctx.Done(); ln.Close() }()
-	log.Printf("socks5 proxy on %s (default exporter %q)", ln.Addr(), def)
+	if def != "" {
+		log.Printf("socks5 proxy on %s (other hosts go through exporter %q)", ln.Addr(), def)
+	} else {
+		log.Printf("socks5 proxy on %s (other hosts are reached directly)", ln.Addr())
+	}
+	direct := &net.Dialer{Timeout: 30 * time.Second}
 	dial := func(ctx context.Context, host string, port int) (net.Conn, error) {
-		name, target, err := resolveHost(host, port, def)
-		if err != nil {
-			return nil, err
+		name, target := resolveHost(host, port, def)
+		if name == "" { // not an msnw name and no default exporter
+			return direct.DialContext(ctx, "tcp", target)
 		}
 		dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()

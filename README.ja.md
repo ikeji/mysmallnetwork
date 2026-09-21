@@ -166,7 +166,7 @@ msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定�
 msnw client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
 msnw client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
 
-msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5
+msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
 msnw client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
 ```
 
@@ -177,12 +177,16 @@ SOCKS5 モードでの宛先ホストの解釈:
 | `hogehoge`               | exporter hogehoge の、宛先ポート (*)       |
 | `hogehoge.msnw`          | 同上                                       |
 | `db.hogehoge.msnw`       | exporter hogehoge から `db:<port>` へ      |
-| それ以外(FQDN / IP)    | `-n` で指定した既定 exporter から外へ      |
+| それ以外(FQDN / IP)    | `-n` で指定した既定 exporter から外へ。`-n` が無ければ手元から直接接続 |
 
 (*) exporter が TCP ターゲットを 1 つだけ公開している場合(`msnw export -n web -t 8765`)、
 その名前はサービスを指すとみなしてポートを無視するので、`http://web/` でそのまま繋がる。
 `-t` が複数、または `--all` のときは名前はホストを指し、ポートでターゲットを選ぶ。
 これは SOCKS5 だけの扱いで、`-n web:80` のように明示した場合は厳密なまま。
+
+msnw の名前以外は手元から直接繋ぐので、ブラウザに常時設定したままで使える。
+既定では 127.0.0.1 でだけ待ち受ける。`--socks5 :1080` のように他のアドレスで待ち受けると、
+他のマシンからも(直接接続も含めて)使えてしまう点に注意。
 
 `.msnw` 形式を使うときは `curl --socks5-hostname` / `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'` のように
 名前解決をプロキシに任せる設定にする。
