@@ -269,6 +269,7 @@ type nodeFlags struct {
 	server, linkKey, serverKey, serverFP *string
 	port                                 *int
 	verbose                              *bool
+	logFile                              *string
 }
 
 func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
@@ -279,6 +280,23 @@ func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
 		serverFP:  fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)"),
 		port:      fs.Int("port", 0, "local UDP port to bind (0 = random)"),
 		verbose:   fs.Bool("v", false, "verbose logging"),
+		logFile:   fs.String("log", os.Getenv("MSNW_LOG"), "append log output to this file instead of stderr (or $MSNW_LOG)"),
+	}
+}
+
+// parseWithTrailingFlags parses args allowing flags after positional
+// arguments too ("msnw mosh user@home -v"), which the flag package does not
+// do on its own. It returns the positional arguments.
+func parseWithTrailingFlags(fs *flag.FlagSet, args []string) []string {
+	var pos []string
+	for {
+		fs.Parse(args)
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return pos
+		}
+		pos = append(pos, rest[0])
+		args = rest[1:]
 	}
 }
 
@@ -296,6 +314,13 @@ func (nf *nodeFlags) exportEnv() {
 // watcher. The returned stop function releases everything.
 func newPool(nf *nodeFlags) (*pool, func(), error) {
 	quietQUIC()
+	if *nf.logFile != "" {
+		f, err := os.OpenFile(*nf.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return nil, nil, err
+		}
+		log.SetOutput(f)
+	}
 	id, err := ident.New()
 	if err != nil {
 		return nil, nil, err

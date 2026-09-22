@@ -249,7 +249,10 @@ ProxyCommand) bound to 127.0.0.1 only, forwards a local UDP port to the same
 port on the exporter side inside the same process, then runs `mosh-client`
 against 127.0.0.1. Extra ssh options go in `-ssh "..."` or `MSNW_MOSH_SSH`. The
 link key reaches the child process through the environment, not the command
-line.
+line. Flags may follow the host (`msnw mosh user@home -v`). While mosh owns
+the terminal, log output is invisible, so use `-log FILE` (or `MSNW_LOG`) to
+append it to a file; both the in-process forwarder and the ssh ProxyCommand
+child log there.
 
 ## How it works
 

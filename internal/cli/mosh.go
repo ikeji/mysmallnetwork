@@ -23,12 +23,12 @@ func Mosh(args []string) {
 	ports := fs.String("p", "60001:60999", "UDP port or range LO:HI for mosh-server (the exporter must allow it with -u)")
 	sshOpts := fs.String("ssh", os.Getenv("MSNW_MOSH_SSH"), "extra options for the bootstrap ssh (or $MSNW_MOSH_SSH)")
 	nf := addNodeFlags(fs)
-	fs.Parse(args)
-	if fs.NArg() != 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [user@]NAME")
+	pos := parseWithTrailingFlags(fs, args)
+	if len(pos) != 1 || *nf.linkKey == "" {
+		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [-v] [-log FILE] [user@]NAME")
 		os.Exit(2)
 	}
-	dest := fs.Arg(0)
+	dest := pos[0]
 	name := dest[strings.LastIndex(dest, "@")+1:]
 	for _, c := range []string{"ssh", "mosh-client"} {
 		if _, err := exec.LookPath(c); err != nil {
@@ -47,6 +47,12 @@ func Mosh(args []string) {
 		lang = "en_US.UTF-8"
 	}
 	proxy := fmt.Sprintf("ProxyCommand=%s client -n %s", shellQuote(self), shellQuote(name))
+	if *nf.verbose {
+		proxy += " -v"
+	}
+	if *nf.logFile != "" {
+		proxy += " -log " + shellQuote(*nf.logFile)
+	}
 	sshArgs := []string{"-o", proxy}
 	sshArgs = append(sshArgs, strings.Fields(*sshOpts)...)
 	sshArgs = append(sshArgs, dest, "--", "mosh-server", "new", "-i", "127.0.0.1",
