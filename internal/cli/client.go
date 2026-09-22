@@ -28,11 +28,12 @@ import (
 // on failure. The link key is looked up per name so that several keys (with
 // priorities) can be supported later without changing callers.
 type pool struct {
-	node    *peer.Node
-	linkKey string
-	ctx     context.Context
-	mu      sync.Mutex
-	ents    map[string]*entry
+	node     *peer.Node
+	linkKey  string
+	ctx      context.Context
+	mu       sync.Mutex
+	ents     map[string]*entry
+	resuming map[string]bool // session tokens with a resume loop running
 }
 
 type entry struct {
@@ -117,25 +118,54 @@ func (p *pool) dropAll(reason string) {
 	p.node.DropControl()
 }
 
-// watchNetwork polls the local address set and drops connections when it
-// changes, so roaming between networks recovers in seconds instead of
-// waiting for the idle timeout.
+// watchNetwork polls the local address set and drops connections when an
+// address disappears, so roaming between networks recovers in seconds
+// instead of waiting for the idle timeout. Added addresses are ignored: they
+// cannot break an existing path, and after a network change IPv6 addresses
+// tend to arrive one by one for several seconds, which must not cause a
+// redial each time. A removal has to persist for one extra tick before it
+// counts, to ride out brief flaps.
 func (p *pool) watchNetwork(ctx context.Context) {
-	last := strings.Join(netutil.LocalAddrs(0), ",")
+	known := addrSet(netutil.LocalAddrs(0))
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
+	pending := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
-		cur := strings.Join(netutil.LocalAddrs(0), ",")
-		if cur != last {
-			last = cur
+		cur := addrSet(netutil.LocalAddrs(0))
+		lost := false
+		for a := range known {
+			if !cur[a] {
+				lost = true
+				break
+			}
+		}
+		switch {
+		case lost && pending:
+			known = cur
+			pending = false
 			p.dropAll("local network changed")
+		case lost:
+			pending = true // confirm on the next tick
+		default:
+			pending = false
+			for a := range cur {
+				known[a] = true
+			}
 		}
 	}
+}
+
+func addrSet(addrs []string) map[string]bool {
+	m := make(map[string]bool, len(addrs))
+	for _, a := range addrs {
+		m[a] = true
+	}
+	return m
 }
 
 // open returns a resumable session to target on exporter name. If the
@@ -169,12 +199,29 @@ func (p *pool) open(ctx context.Context, name, target string) (*resume.Session, 
 // resumeSession re-attaches s over a (re)dialed connection, retrying until
 // resume.Grace has passed.
 func (p *pool) resumeSession(name string, s *resume.Session) {
+	// One loop per session: a detach during a resume attempt just makes the
+	// running loop retry, instead of racing a second loop against it.
+	p.mu.Lock()
+	if p.resuming[s.Token] {
+		p.mu.Unlock()
+		return
+	}
+	p.resuming[s.Token] = true
+	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		delete(p.resuming, s.Token)
+		p.mu.Unlock()
+	}()
 	deadline := time.Now().Add(resume.Grace)
 	backoff := 500 * time.Millisecond
 	for time.Now().Before(deadline) && !s.Closed() && p.ctx.Err() == nil {
 		if err := p.tryResume(name, s); err == nil {
-			log.Printf("session %s to %q resumed", s.Token[:8], name)
-			return
+			if detached, _ := s.Detached(); !detached {
+				log.Printf("session %s to %q resumed", s.Token[:8], name)
+				return
+			}
+			// detached again while we were attaching: go round once more
 		} else if p.node.Verbose {
 			log.Printf("resume %s: %v", s.Token[:8], err)
 		}
@@ -259,7 +306,7 @@ func newPool(nf *nodeFlags) (*pool, func(), error) {
 	}
 	node.Verbose = *nf.verbose
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	p := &pool{node: node, linkKey: *nf.linkKey, ctx: ctx, ents: map[string]*entry{}}
+	p := &pool{node: node, linkKey: *nf.linkKey, ctx: ctx, ents: map[string]*entry{}, resuming: map[string]bool{}}
 	go p.watchNetwork(ctx)
 	return p, func() { stop(); node.Close() }, nil
 }
