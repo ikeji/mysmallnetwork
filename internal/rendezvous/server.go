@@ -18,6 +18,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 	"github.com/ikeji/mysmallnetwork/internal/netutil"
 	"github.com/ikeji/mysmallnetwork/internal/proto"
@@ -137,11 +138,11 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 
 	if s.ServerKey != "" && !ident.AuthOK(s.ServerKey, ident.LabelServer, m.Auth, conn.ConnectionState().TLS) {
 		log.Printf("%s: %s %q: bad auth", remote, m.Type, m.Name)
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "authentication failed"})
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Version: buildinfo.Version(), Error: "authentication failed"})
 		return
 	}
 	if m.Name == "" || m.Fingerprint == "" {
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "name and fp required"})
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Version: buildinfo.Version(), Error: "name and fp required"})
 		return
 	}
 	cands := netutil.Dedup(append([]string{remote}, m.LocalAddrs...))
@@ -152,7 +153,7 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 	case proto.TypeConnect:
 		s.handleConnect(st, m, cands, remote)
 	default:
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "unknown message type"})
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Version: buildinfo.Version(), Error: "unknown message type"})
 	}
 }
 
@@ -172,9 +173,9 @@ func (s *Server) handleRegister(ctx context.Context, st *quic.Stream, m *proto.M
 		old.send(&proto.Message{Type: proto.TypeError, Error: "replaced by a new registration"})
 		old.stream.CancelRead(0)
 	} else {
-		log.Printf("%s: exporter %s registered, candidates=%v", remote, short(m.Name), cands)
+		log.Printf("%s: exporter %s registered (%s), candidates=%v", remote, short(m.Name), versionOf(m), cands)
 	}
-	if err := ex.send(&proto.Message{Type: proto.TypeOK, Reflexive: remote}); err != nil {
+	if err := ex.send(&proto.Message{Type: proto.TypeOK, Version: buildinfo.Version(), Reflexive: remote}); err != nil {
 		return
 	}
 
@@ -208,12 +209,12 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 	s.mu.Unlock()
 	if ex == nil {
 		log.Printf("%s: connect %s: no such exporter", remote, short(m.Name))
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "no such exporter (check the name and the link key)"})
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Version: buildinfo.Version(), Error: "no such exporter (check the name and the link key)"})
 		return
 	}
 	session := newSession()
 	s.relay.allow(session, ipOf(remote), ipOf(ex.candidates[0]))
-	log.Printf("%s: connect %s -> %s session=%s", remote, short(m.Name), ex.candidates[0], session[:8])
+	log.Printf("%s: connect %s (%s) -> %s session=%s", remote, short(m.Name), versionOf(m), ex.candidates[0], session[:8])
 
 	err := ex.send(&proto.Message{
 		Type:            proto.TypeIncoming,
@@ -223,11 +224,12 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		RelayPort:       s.RelayPort,
 	})
 	if err != nil {
-		proto.Write(st, &proto.Message{Type: proto.TypeError, Error: "exporter unreachable: " + err.Error()})
+		proto.Write(st, &proto.Message{Type: proto.TypeError, Version: buildinfo.Version(), Error: "exporter unreachable: " + err.Error()})
 		return
 	}
 	proto.Write(st, &proto.Message{
 		Type:            proto.TypePeer,
+		Version:         buildinfo.Version(),
 		Session:         session,
 		PeerFingerprint: ex.fp,
 		Candidates:      ex.candidates,
@@ -242,6 +244,13 @@ func ipOf(hostport string) net.IP {
 		return nil
 	}
 	return net.ParseIP(h)
+}
+
+func versionOf(m *proto.Message) string {
+	if m.Version == "" {
+		return "version unknown"
+	}
+	return m.Version
 }
 
 // short abbreviates a hashed name for logs.

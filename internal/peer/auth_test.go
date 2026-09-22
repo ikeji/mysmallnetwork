@@ -51,8 +51,8 @@ func runAuth(t *testing.T, clientKey, exporterKey string) (port int, cerr, serr 
 	c, s := pair(t)
 	ctx := context.Background()
 	done := make(chan error, 1)
-	go func() { done <- AuthenticateAsExporter(ctx, s, exporterKey, 2222) }()
-	port, cerr = AuthenticateAsClient(ctx, c, clientKey)
+	go func() { _, err := AuthenticateAsExporter(ctx, s, exporterKey, 2222); done <- err }()
+	port, _, cerr = AuthenticateAsClient(ctx, c, clientKey)
 	serr = <-done
 	return
 }

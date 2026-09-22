@@ -11,9 +11,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"runtime"
-	"runtime/debug"
 
+	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/cli"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 )
@@ -30,21 +29,6 @@ commands:
 
 Run "msnw <command> -h" for the options of a command.
 `
-
-// version is set by the release build (-ldflags "-X main.version=v1.2.3");
-// otherwise it falls back to the module version Go recorded, if any.
-var version = ""
-
-func versionString() string {
-	v := version
-	if v == "" {
-		v = "dev"
-		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-			v = bi.Main.Version
-		}
-	}
-	return fmt.Sprintf("msnw %s (%s, %s/%s)", v, runtime.Version(), runtime.GOOS, runtime.GOARCH)
-}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -64,7 +48,7 @@ func main() {
 	case "gen-key", "genkey":
 		fmt.Println(ident.GenerateKey())
 	case "version", "-V", "--version":
-		fmt.Println(versionString())
+		fmt.Println(buildinfo.String())
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 	default:

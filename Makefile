@@ -1,7 +1,7 @@
 # Static builds so the binaries run on any Linux regardless of glibc version.
 # VERSION comes from the git tag (or "dev"); the release workflow passes the tag.
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-GOFLAGS := -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
+GOFLAGS := -trimpath -ldflags="-s -w -X github.com/ikeji/mysmallnetwork/internal/buildinfo.version=$(VERSION)"
 export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone

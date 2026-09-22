@@ -27,7 +27,8 @@ const (
 // Message is the single flat envelope used on control streams. Only the
 // fields relevant to a given Type are populated.
 type Message struct {
-	Type string `json:"type"`
+	Type    string `json:"type"`
+	Version string `json:"version,omitempty"` // sender's build version, for mismatch diagnostics
 
 	// Register / Connect
 	Name        string   `json:"name,omitempty"` // HMAC(link key, name); the server never sees real names
@@ -50,8 +51,10 @@ type Message struct {
 
 // Peer authentication (first stream of every peer connection):
 //
-//	client:   "AUTH <hex tag>\n"                 tag = HMAC(link key, EKM[LabelClient])
-//	exporter: "AUTH <hex tag> <default port>\n"  tag = HMAC(link key, EKM[LabelExporter])
+//	client:   "AUTH <hex tag> [version]\n"                 tag = HMAC(link key, EKM[LabelClient])
+//	exporter: "AUTH <hex tag> <default port> [version]\n"  tag = HMAC(link key, EKM[LabelExporter])
+//
+// The version fields are informational (older builds omit them).
 //
 // Only after both tags verify does the exporter accept CONNECT streams and
 // the client send data. A rendezvous server (or anyone in the middle) that

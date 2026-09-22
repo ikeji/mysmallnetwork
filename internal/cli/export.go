@@ -16,6 +16,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 	"github.com/ikeji/mysmallnetwork/internal/peer"
 	"github.com/ikeji/mysmallnetwork/internal/proto"
@@ -218,11 +219,12 @@ func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey str
 			return
 		}
 		go func() {
-			if err := peer.AuthenticateAsExporter(ctx, conn, linkKey, defaultPort); err != nil {
+			clientVersion, err := peer.AuthenticateAsExporter(ctx, conn, linkKey, defaultPort)
+			if err != nil {
 				log.Printf("peer %s rejected: %v", conn.RemoteAddr(), err)
 				return
 			}
-			log.Printf("peer connected from %s", conn.RemoteAddr())
+			log.Printf("peer connected from %s%s", conn.RemoteAddr(), buildinfo.Mismatch("client", clientVersion, "exporter"))
 			mux := tunnel.NewUDPMux(conn)
 			for {
 				st, err := conn.AcceptStream(ctx)

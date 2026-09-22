@@ -402,3 +402,7 @@ Findings:
   throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
 - For debugging, `MSNW_FORCE_RELAY=1` makes the client skip direct paths and
   use only the relay; `-v` shows why each dial failed.
+- `msnw version` prints the build version. Peers and the server exchange their
+  versions; when they differ, logs and error messages say so, e.g.
+  `... (exporter v0.1.4, this client v0.1.5)`. A peer too old to send a
+  version shows as `unknown`.

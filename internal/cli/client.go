@@ -16,6 +16,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 	"github.com/ikeji/mysmallnetwork/internal/netutil"
 	"github.com/ikeji/mysmallnetwork/internal/peer"
@@ -40,6 +41,7 @@ type entry struct {
 	mu          sync.Mutex
 	conn        *quic.Conn
 	defaultPort int
+	peerVersion string         // exporter's build version ("" if it did not say)
 	udp         *tunnel.UDPMux // lazily created for udpConn
 	udpConn     *quic.Conn
 }
@@ -71,13 +73,31 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	port, err := peer.AuthenticateAsClient(ctx, conn, key)
+	port, ver, err := peer.AuthenticateAsClient(ctx, conn, key)
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s: %w", name, err)
 	}
-	log.Printf("connected to %q via %s", name, via)
-	e.conn, e.defaultPort = conn, port
+	log.Printf("connected to %q via %s%s", name, via, buildinfo.Mismatch("exporter", ver, "client"))
+	e.conn, e.defaultPort, e.peerVersion = conn, port, ver
 	return conn, port, nil
+}
+
+// annotate appends the exporter/client versions to an error from exporter
+// name when they differ, since protocol errors usually mean a version skew.
+func (p *pool) annotate(name string, err error) error {
+	p.mu.Lock()
+	e := p.ents[name]
+	p.mu.Unlock()
+	if e == nil {
+		return err
+	}
+	e.mu.Lock()
+	ver := e.peerVersion
+	e.mu.Unlock()
+	if note := buildinfo.Mismatch("exporter", ver, "client"); note != "" {
+		return fmt.Errorf("%w%s", err, note)
+	}
+	return err
 }
 
 // udpMux returns the UDP multiplexer for the live connection to name.
@@ -187,7 +207,7 @@ func (p *pool) open(ctx context.Context, name, target string) (*resume.Session, 
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, p.annotate(name, fmt.Errorf("%s: %w", name, err))
 	}
 	sess.OnDetach = func(s *resume.Session) { p.resumeSession(name, s) }
 	if err := sess.Attach(st, rd, 0); err != nil {
@@ -249,7 +269,7 @@ func (p *pool) tryResume(name string, s *resume.Session) error {
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
-		return err
+		return p.annotate(name, err)
 	}
 	peerRecv, err := strconv.ParseUint(reply, 10, 64)
 	if err != nil {

@@ -12,11 +12,14 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 
+	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 	"github.com/ikeji/mysmallnetwork/internal/netutil"
 	"github.com/ikeji/mysmallnetwork/internal/proto"
@@ -191,6 +194,7 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	defer st.Close()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeConnect,
+		Version:     buildinfo.Version(),
 		Name:        ident.HashName(linkKey, name),
 		Auth:        auth,
 		Fingerprint: n.Ident.Fingerprint,
@@ -215,9 +219,9 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 			Relay:       n.RelayAddr(m.RelayPort),
 		}, nil
 	case proto.TypeError:
-		return nil, errors.New(m.Error)
+		return nil, errors.New(m.Error + buildinfo.Mismatch("server", m.Version, "client"))
 	default:
-		return nil, fmt.Errorf("unexpected reply %q", m.Type)
+		return nil, fmt.Errorf("unexpected reply %q%s", m.Type, buildinfo.Mismatch("server", m.Version, "client"))
 	}
 }
 
@@ -362,6 +366,7 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 	defer st.Close()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeRegister,
+		Version:     buildinfo.Version(),
 		Name:        ident.HashName(linkKey, name),
 		Auth:        auth,
 		Fingerprint: n.Ident.Fingerprint,
@@ -378,9 +383,9 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 	}
 	st.SetReadDeadline(time.Time{})
 	if m.Type != proto.TypeOK {
-		return fmt.Errorf("register rejected: %s", m.Error)
+		return fmt.Errorf("register rejected: %s%s", m.Error, buildinfo.Mismatch("server", m.Version, "exporter"))
 	}
-	log.Printf("registered %q at %s (public %s)", name, n.Server, m.Reflexive)
+	log.Printf("registered %q at %s (public %s)%s", name, n.Server, m.Reflexive, buildinfo.Mismatch("server", m.Version, "exporter"))
 
 	// The blocking Read below does not observe ctx; unblock it on shutdown.
 	done := make(chan struct{})
@@ -423,12 +428,13 @@ func (n *Node) Listen(allow func(fp string) bool) (*quic.Listener, error) {
 const authTimeout = 10 * time.Second
 
 // AuthenticateAsClient runs the link-key handshake on a freshly dialed peer
-// connection and returns the exporter's default target port. On failure the
-// connection is closed.
-func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) (int, error) {
-	fail := func(err error) (int, error) {
+// connection and returns the exporter's default target port and version
+// ("" for builds that predate version exchange). On failure the connection
+// is closed.
+func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) (int, string, error) {
+	fail := func(err error) (int, string, error) {
 		conn.CloseWithError(1, "authentication failed")
-		return 0, err
+		return 0, "", err
 	}
 	cs := conn.ConnectionState().TLS
 	mine, err := ident.AuthTag(linkKey, ident.LabelClient, cs)
@@ -443,31 +449,39 @@ func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) 
 	}
 	defer st.Close()
 	st.SetDeadline(time.Now().Add(authTimeout))
-	if _, err := fmt.Fprintf(st, "AUTH %s\n", mine); err != nil {
+	if _, err := fmt.Fprintf(st, "AUTH %s %s\n", mine, buildinfo.Version()); err != nil {
 		return fail(err)
 	}
 	line, err := bufio.NewReader(st).ReadString('\n')
 	if err != nil {
 		return fail(fmt.Errorf("exporter did not answer authentication: %w", err))
 	}
-	var theirs string
-	var port int
-	if _, err := fmt.Sscanf(line, "AUTH %s %d", &theirs, &port); err != nil {
+	f := strings.Fields(line)
+	if len(f) < 3 || f[0] != "AUTH" {
 		return fail(errors.New("exporter rejected the link key"))
 	}
-	if !ident.AuthOK(linkKey, ident.LabelExporter, theirs, cs) {
-		return fail(errors.New("exporter has a different link key"))
+	port, err := strconv.Atoi(f[2])
+	if err != nil {
+		return fail(errors.New("exporter rejected the link key"))
 	}
-	return port, nil
+	peerVersion := ""
+	if len(f) > 3 {
+		peerVersion = f[3]
+	}
+	if !ident.AuthOK(linkKey, ident.LabelExporter, f[1], cs) {
+		return fail(errors.New("exporter has a different link key" + buildinfo.Mismatch("exporter", peerVersion, "client")))
+	}
+	return port, peerVersion, nil
 }
 
 // AuthenticateAsExporter accepts the first stream of a peer connection and
-// verifies the client's link-key proof before answering with our own. The
-// connection is closed on any failure.
-func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string, defaultPort int) error {
-	fail := func(err error) error {
+// verifies the client's link-key proof before answering with our own. It
+// returns the client's version ("" for older builds). The connection is
+// closed on any failure.
+func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string, defaultPort int) (string, error) {
+	fail := func(err error) (string, error) {
 		conn.CloseWithError(1, "authentication failed")
-		return err
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
@@ -481,20 +495,24 @@ func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string
 	if err != nil {
 		return fail(err)
 	}
-	var theirs string
-	if _, err := fmt.Sscanf(line, "AUTH %s", &theirs); err != nil {
+	f := strings.Fields(line)
+	if len(f) < 2 || f[0] != "AUTH" {
 		return fail(errors.New("client did not authenticate"))
 	}
+	peerVersion := ""
+	if len(f) > 2 {
+		peerVersion = f[2]
+	}
 	cs := conn.ConnectionState().TLS
-	if !ident.AuthOK(linkKey, ident.LabelClient, theirs, cs) {
-		return fail(errors.New("client has a different link key"))
+	if !ident.AuthOK(linkKey, ident.LabelClient, f[1], cs) {
+		return fail(errors.New("client has a different link key" + buildinfo.Mismatch("client", peerVersion, "exporter")))
 	}
 	mine, err := ident.AuthTag(linkKey, ident.LabelExporter, cs)
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := fmt.Fprintf(st, "AUTH %s %d\n", mine, defaultPort); err != nil {
+	if _, err := fmt.Fprintf(st, "AUTH %s %d %s\n", mine, defaultPort, buildinfo.Version()); err != nil {
 		return fail(err)
 	}
-	return nil
+	return peerVersion, nil
 }

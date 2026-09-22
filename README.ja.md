@@ -362,3 +362,6 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
   `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
 - デバッグ用に `MSNW_FORCE_RELAY=1` で client を直結せずリレーのみにできる。
   `-v` で dial の失敗理由を表示。
+- `msnw version` でビルドのバージョンを表示する。peer 同士と server はバージョンを交換し、
+  違っていればログとエラーに `... (exporter v0.1.4, this client v0.1.5)` のように両方を出す。
+  バージョンを送ってこない古い相手は `unknown` と表示される。
