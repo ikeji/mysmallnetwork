@@ -33,7 +33,7 @@ Go が入っていれば `go install github.com/ikeji/mysmallnetwork/cmd/msnw@la
 ## ビルド
 
 ```
-make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server / export / client / mosh / gen-key サブコマンド)
+make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server / export / client / mosh / gen-key / version サブコマンド)
 make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
 make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
 ```

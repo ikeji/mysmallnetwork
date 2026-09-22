@@ -35,7 +35,7 @@ With Go installed, `go install github.com/ikeji/mysmallnetwork/cmd/msnw@latest` 
 ## Build
 
 ```
-make            # static binary bin/msnw (CGO_ENABLED=0) with the server / export / client / mosh / gen-key subcommands
+make            # static binary bin/msnw (CGO_ENABLED=0) with the server / export / client / mosh / gen-key / version subcommands
 make test       # unit tests + the full NAT simulation matrix (make unit / make natsim / make roam individually)
 make cross      # linux/darwin/windows builds into bin/<os>-<arch>/
 ```

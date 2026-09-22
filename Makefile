@@ -1,16 +1,24 @@
 # Static builds so the binaries run on any Linux regardless of glibc version.
-GOFLAGS := -trimpath -ldflags="-s -w"
+# VERSION comes from the git tag (or "dev"); the release workflow passes the tag.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GOFLAGS := -trimpath -ldflags="-s -w -X main.version=$(VERSION)"
 export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone
 
-.PHONY: all test unit natsim roam clean cross
+.PHONY: all test unit natsim roam clean cross FORCE
 
 all: bin/msnw
 
 # Real file target so "sudo make natsim" reuses a binary built as the user.
-bin/msnw: go.mod go.sum $(shell find cmd internal -name '*.go')
+# bin/.version changes only when VERSION does, so a new tag triggers a rebuild.
+bin/msnw: go.mod go.sum $(shell find cmd internal -name '*.go') bin/.version
 	go build $(GOFLAGS) -o bin/ ./cmd/...
+
+bin/.version: FORCE
+	@mkdir -p bin; echo "$(VERSION)" | cmp -s - $@ 2>/dev/null || echo "$(VERSION)" > $@
+
+FORCE:
 
 test: unit natsim roam
 

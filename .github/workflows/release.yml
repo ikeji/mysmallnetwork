@@ -17,7 +17,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Cross-compile
-        run: make cross
+        run: make cross VERSION=${GITHUB_REF_NAME}
       - name: Package
         run: |
           set -eu
