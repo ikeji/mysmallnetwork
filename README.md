@@ -203,6 +203,34 @@ included.
 For the `.msnw` forms let the proxy resolve names, e.g. `curl --socks5-hostname`
 or `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'`.
 
+Example: a web service in the browser
+
+Publish it on the machine that runs it, and start the proxy on the machine
+with the browser:
+
+```
+msnw export -key K -n mypc -t 8765      # the service runs on this machine
+msnw client -key K --socks5             # on the machine with the browser
+```
+
+Then point the browser at `http://mypc/` (or `http://mypc.msnw/`). Because
+`mypc` publishes a single target, the port is not needed. Every other site is
+reached directly, so the proxy can stay on all the time.
+
+- **Firefox**: Settings → Network Settings → Manual proxy configuration, SOCKS
+  Host `127.0.0.1`, Port `1080`, SOCKS v5, and tick "Proxy DNS when using SOCKS
+  v5". Without that last option Firefox tries to resolve `mypc` itself and
+  fails.
+- **Chrome / Chromium / Edge**: SOCKS5 sends names through the proxy by
+  default, but the setting is not in the UI; start the browser with
+  `--proxy-server="socks5://127.0.0.1:1080"`, or use an extension such as
+  FoxyProxy / SwitchyOmega and add a rule for `*.msnw` and your exporter names.
+- **Safari / macOS system proxy**: System Settings → Network → Details →
+  Proxies → SOCKS proxy `127.0.0.1:1080`. This applies to every app that uses
+  the system proxy.
+- **curl**: `curl --socks5-hostname 127.0.0.1:1080 http://mypc/` (with plain
+  `--socks5` curl resolves the name locally and fails).
+
 Example: ssh
 
 ```

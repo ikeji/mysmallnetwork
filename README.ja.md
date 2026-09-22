@@ -191,6 +191,30 @@ msnw の名前以外は手元から直接繋ぐので、ブラウザに常時設
 `.msnw` 形式を使うときは `curl --socks5-hostname` / `ssh -o ProxyCommand='nc -X 5 -x ... %h %p'` のように
 名前解決をプロキシに任せる設定にする。
 
+例: Web サービスをブラウザで見る
+
+サービスが動いている PC で公開し、ブラウザのある PC でプロキシを起動する:
+
+```
+msnw export -key K -n mypc -t 8765      # サービスが動いている PC
+msnw client -key K --socks5             # ブラウザのある PC
+```
+
+あとはブラウザで `http://mypc/`(または `http://mypc.msnw/`)を開く。`mypc` は
+ターゲットが 1 つなのでポートは要らない。それ以外のサイトは手元から直接繋ぐので、
+プロキシは設定したままでよい。
+
+- **Firefox**: 設定 → ネットワーク設定 → 手動でプロキシを設定、SOCKS ホスト `127.0.0.1`、
+  ポート `1080`、SOCKS v5、「SOCKS v5 を使用するときは DNS もプロキシを使用する」をオン。
+  最後の項目が無いと Firefox が自分で `mypc` を名前解決しようとして失敗する。
+- **Chrome / Chromium / Edge**: SOCKS5 では名前解決を既定でプロキシに任せるが、設定画面に
+  項目が無い。`--proxy-server="socks5://127.0.0.1:1080"` を付けて起動するか、FoxyProxy や
+  SwitchyOmega のような拡張で `*.msnw` と exporter 名向けのルールを作る。
+- **Safari / macOS のシステムプロキシ**: システム設定 → ネットワーク → 詳細 → プロキシ →
+  SOCKS プロキシ `127.0.0.1:1080`。システムプロキシを使う全アプリに効く。
+- **curl**: `curl --socks5-hostname 127.0.0.1:1080 http://mypc/`(`--socks5` だけだと
+  curl が手元で名前解決して失敗する)。
+
 例: ssh
 
 ```
