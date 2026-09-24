@@ -167,10 +167,12 @@ msnw client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
 msnw client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
 
 msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
+msnw client --http-proxy                # 127.0.0.1:8080 で HTTP プロキシ。同じ規則(CONNECT と平文 http)
+msnw client --socks5 --http-proxy       # 両方同時
 msnw client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
 ```
 
-SOCKS5 モードでの宛先ホストの解釈:
+プロキシ(SOCKS5 と HTTP プロキシで共通)での宛先ホストの解釈:
 
 | 宛先ホスト               | 行き先                                    |
 |--------------------------|-------------------------------------------|
@@ -218,7 +220,15 @@ msnw client -key K --socks5             # ブラウザのある PC
   列挙した名前だけをプロキシに回し、それ以外は `DIRECT` にする。プロキシを起動して
   いないときも他のサイトが見られる。ブラウザの自動プロキシ設定に
   `file:///path/to/msnw.pac` を指定する(http で配ってもよい)。Firefox も Chrome も、
-  PAC で指定した SOCKS5 では手動設定と同様にプロキシ側で名前解決する。
+  PAC で指定した SOCKS5 では手動設定と同様にプロキシ側で名前解決する。HTTP プロキシ
+  だけで使うなら、ファイル内の `MSNW_PROXY` を `PROXY 127.0.0.1:8080` に変える。
+- **Android**: Chrome も WebView(androidx の `ProxyController`)も SOCKS は使えないので、
+  Termux で `msnw client --http-proxy` を動かし、Wi-Fi ネットワークのプロキシ設定を
+  ホスト `127.0.0.1`、ポート `8080` にする(設定 → Wi-Fi → そのネットワーク → 詳細 →
+  プロキシ: 手動)。これで Chrome から `http://mypc/` が開ける。この設定は Wi-Fi ごとで、
+  モバイル回線では効かない。同じプロキシを `ProxyController` で設定する自作アプリなら
+  回線を問わず効く。プロキシを使わないなら `msnw client -n mypc -l 8765` で
+  `http://localhost:8765/` を開く方法がどのブラウザでも使える。
 
 例: ssh
 

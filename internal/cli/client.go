@@ -17,6 +17,7 @@ import (
 	"github.com/quic-go/quic-go"
 
 	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
+	"github.com/ikeji/mysmallnetwork/internal/httpproxy"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
 	"github.com/ikeji/mysmallnetwork/internal/netutil"
 	"github.com/ikeji/mysmallnetwork/internal/peer"
@@ -368,15 +369,17 @@ func quietQUIC() {
 func Client(args []string) {
 	args = netutil.OptionalValueFlag(args, "l", "auto")
 	args = netutil.OptionalValueFlag(args, "socks5", "127.0.0.1:1080")
+	args = netutil.OptionalValueFlag(args, "http-proxy", "127.0.0.1:8080")
 	fs := flag.NewFlagSet("msnw client", flag.ExitOnError)
-	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in socks5 mode)")
+	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in proxy modes)")
 	listen := fs.String("l", "", "listen locally (port, :port, host:port, or udp:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
+	httpProxy := fs.String("http-proxy", "", "run an HTTP proxy (bare --http-proxy listens on 127.0.0.1:8080); may be combined with --socks5")
 	nf := addNodeFlags(fs)
 	fs.Parse(args)
 
-	if *nf.linkKey == "" || (*name == "" && *socks == "") {
-		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] [-n NAME]   (-s server, -server-key K)")
+	if *nf.linkKey == "" || (*name == "" && *socks == "" && *httpProxy == "") {
+		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] | --http-proxy [addr] [-n NAME]   (-s server, -server-key K)")
 		os.Exit(2)
 	}
 	log.SetOutput(os.Stderr)
@@ -388,8 +391,14 @@ func Client(args []string) {
 	ctx := p.ctx
 
 	switch {
-	case *socks != "":
-		runSocks(ctx, p, *socks, *name)
+	case *socks != "" || *httpProxy != "":
+		if *socks != "" {
+			go runSocks(ctx, p, *socks, *name)
+		}
+		if *httpProxy != "" {
+			go runHTTPProxy(ctx, p, *httpProxy, *name)
+		}
+		<-ctx.Done()
 	case *listen != "":
 		runListen(ctx, p, *name, *listen)
 	default:
@@ -576,7 +585,22 @@ func resolveHost(host string, port int, def string) (name, target string) {
 	return def, net.JoinHostPort(host, ps)
 }
 
-func runSocks(ctx context.Context, p *pool, listen, def string) {
+// proxyDialer decides, per destination, between the tunnel and a direct
+// connection (see resolveHost); shared by the SOCKS5 and HTTP proxies.
+func proxyDialer(p *pool, def string) func(ctx context.Context, host string, port int) (net.Conn, error) {
+	direct := &net.Dialer{Timeout: 30 * time.Second}
+	return func(ctx context.Context, host string, port int) (net.Conn, error) {
+		name, target := resolveHost(host, port, def)
+		if name == "" { // not an msnw name and no default exporter
+			return direct.DialContext(ctx, "tcp", target)
+		}
+		dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return p.open(dctx, name, target)
+	}
+}
+
+func listenProxy(ctx context.Context, kind, listen, def string) net.Listener {
 	addr, err := netutil.ParseListen(listen)
 	if err != nil {
 		log.Fatal(err)
@@ -587,21 +611,19 @@ func runSocks(ctx context.Context, p *pool, listen, def string) {
 	}
 	go func() { <-ctx.Done(); ln.Close() }()
 	if def != "" {
-		log.Printf("socks5 proxy on %s (other hosts go through exporter %q)", ln.Addr(), def)
+		log.Printf("%s proxy on %s (other hosts go through exporter %q)", kind, ln.Addr(), def)
 	} else {
-		log.Printf("socks5 proxy on %s (other hosts are reached directly)", ln.Addr())
+		log.Printf("%s proxy on %s (other hosts are reached directly)", kind, ln.Addr())
 	}
-	direct := &net.Dialer{Timeout: 30 * time.Second}
-	dial := func(ctx context.Context, host string, port int) (net.Conn, error) {
-		name, target := resolveHost(host, port, def)
-		if name == "" { // not an msnw name and no default exporter
-			return direct.DialContext(ctx, "tcp", target)
-		}
-		dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		return p.open(dctx, name, target)
-	}
-	socks5.Serve(ctx, ln, dial, log.Printf)
+	return ln
+}
+
+func runSocks(ctx context.Context, p *pool, listen, def string) {
+	socks5.Serve(ctx, listenProxy(ctx, "socks5", listen, def), proxyDialer(p, def), log.Printf)
+}
+
+func runHTTPProxy(ctx context.Context, p *pool, listen, def string) {
+	httpproxy.Serve(ctx, listenProxy(ctx, "http", listen, def), proxyDialer(p, def), log.Printf)
 }
 
 func envOr(k, d string) string {

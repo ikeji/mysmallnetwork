@@ -178,10 +178,12 @@ msnw client -n hogehoge:8080 -l :5000   # listen on all interfaces
 msnw client -n hogehoge:60001 -l udp:60001   # forward UDP (one flow per source address)
 
 msnw client --socks5                    # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
+msnw client --http-proxy                # HTTP proxy on 127.0.0.1:8080 with the same rules (CONNECT + plain http)
+msnw client --socks5 --http-proxy       # both at once
 msnw client --socks5 :1080 -n exit      # unknown hosts go out through exit
 ```
 
-How SOCKS5 destinations are interpreted:
+How proxy destinations (SOCKS5 and HTTP proxy alike) are interpreted:
 
 | destination host        | goes to                                      |
 |-------------------------|----------------------------------------------|
@@ -235,7 +237,16 @@ reached directly, so the proxy can stay on all the time.
   sites keep working even while the proxy is not running. Point the browser's
   automatic proxy configuration at it (`file:///path/to/msnw.pac`, or serve it
   over http). Firefox and Chrome honour the SOCKS5 name resolution from a PAC
-  as they do for a manual SOCKS5 setting.
+  as they do for a manual SOCKS5 setting. For an HTTP-proxy-only client,
+  change `MSNW_PROXY` in the file to `PROXY 127.0.0.1:8080`.
+- **Android**: neither Chrome nor WebView (androidx `ProxyController`) can use
+  SOCKS, so run `msnw client --http-proxy` in Termux and set the Wi-Fi
+  network's proxy to host `127.0.0.1`, port `8080` (Settings → Wi-Fi → the
+  network → Advanced → Proxy: Manual). Chrome then opens `http://mypc/`. The
+  setting is per Wi-Fi network and does not apply on mobile data; an app that
+  sets the same proxy through `ProxyController` works on any network. Without
+  a proxy at all, `msnw client -n mypc -l 8765` and `http://localhost:8765/`
+  work in every browser.
 
 Example: ssh
 
