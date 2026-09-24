@@ -230,6 +230,12 @@ reached directly, so the proxy can stay on all the time.
   the system proxy.
 - **curl**: `curl --socks5-hostname 127.0.0.1:1080 http://mypc/` (with plain
   `--socks5` curl resolves the name locally and fails).
+- **PAC file**: [examples/msnw.pac](examples/msnw.pac) sends `*.msnw` and the
+  names listed in it to the proxy and everything else `DIRECT`, so other
+  sites keep working even while the proxy is not running. Point the browser's
+  automatic proxy configuration at it (`file:///path/to/msnw.pac`, or serve it
+  over http). Firefox and Chrome honour the SOCKS5 name resolution from a PAC
+  as they do for a manual SOCKS5 setting.
 
 Example: ssh
 

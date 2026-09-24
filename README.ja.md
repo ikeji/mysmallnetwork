@@ -214,6 +214,11 @@ msnw client -key K --socks5             # ブラウザのある PC
   SOCKS プロキシ `127.0.0.1:1080`。システムプロキシを使う全アプリに効く。
 - **curl**: `curl --socks5-hostname 127.0.0.1:1080 http://mypc/`(`--socks5` だけだと
   curl が手元で名前解決して失敗する)。
+- **PAC ファイル**: [examples/msnw.pac](examples/msnw.pac) は `*.msnw` とファイル内に
+  列挙した名前だけをプロキシに回し、それ以外は `DIRECT` にする。プロキシを起動して
+  いないときも他のサイトが見られる。ブラウザの自動プロキシ設定に
+  `file:///path/to/msnw.pac` を指定する(http で配ってもよい)。Firefox も Chrome も、
+  PAC で指定した SOCKS5 では手動設定と同様にプロキシ側で名前解決する。
 
 例: ssh
 
