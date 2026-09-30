@@ -28,6 +28,8 @@ esac
 export CC=$TC/bin/$TRIPLE$API-clang CXX=$TC/bin/$TRIPLE$API-clang++
 export AR=$TC/bin/llvm-ar RANLIB=$TC/bin/llvm-ranlib STRIP=$TC/bin/llvm-strip
 export PATH=$TC/bin:$PATH
+# 16 KB page-size devices need every LOAD segment 16 KB aligned.
+PAGE_LDFLAGS="-Wl,-z,max-page-size=16384"
 SRC=$WORK/src
 PREFIX=$WORK/prefix/$ABI
 HOST=$WORK/host
@@ -95,7 +97,7 @@ stage_mosh() {
 		PROTOC="$HOST/bin/protoc" \
 		protobuf_CFLAGS="-I$PREFIX/include" protobuf_LIBS="-L$PREFIX/lib -lprotobuf -llog" \
 		TINFO_CFLAGS="-I$PREFIX/include/ncursesw" TINFO_LIBS="-L$PREFIX/lib -ltinfow" \
-		CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/ncursesw" LDFLAGS="-L$PREFIX/lib -static-libstdc++" \
+		CPPFLAGS="-I$PREFIX/include -I$PREFIX/include/ncursesw" LDFLAGS="-L$PREFIX/lib -static-libstdc++ $PAGE_LDFLAGS" \
 		CXXFLAGS="-O2" CFLAGS="-O2" >/dev/null && \
 		make -j"$JOBS" >/dev/null)
 	install -m 755 "$WORK/build/mosh-$ABI/src/frontend/mosh-client" "$OUT/mosh-client"
@@ -111,7 +113,7 @@ stage_dropbear() {
 	(cd "$WORK/build/dropbear-$ABI" && ./configure --host=$TRIPLE --disable-syslog --disable-lastlog \
 		--disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-loginfunc \
 		--disable-pututline --disable-pututxline \
-		CFLAGS="-O2 -include $HERE/getpass_compat.h" >/dev/null && \
+		CFLAGS="-O2 -include $HERE/getpass_compat.h" LDFLAGS="$PAGE_LDFLAGS" >/dev/null && \
 		make -j"$JOBS" PROGRAMS="dbclient" >/dev/null)
 	install -m 755 "$WORK/build/dropbear-$ABI/dbclient" "$OUT/dbclient"
 	$STRIP "$OUT/dbclient"
@@ -120,7 +122,7 @@ stage_dropbear() {
 
 stage_sshwrap() {
 	log "sshwrap: $ABI ssh -> dbclient translator"
-	$CC -O2 -Wall -o "$OUT/ssh" "$HERE/sshwrap.c"
+	$CC -O2 -Wall $PAGE_LDFLAGS -o "$OUT/ssh" "$HERE/sshwrap.c"
 	$STRIP "$OUT/ssh"
 	ls -la "$OUT/ssh"
 }

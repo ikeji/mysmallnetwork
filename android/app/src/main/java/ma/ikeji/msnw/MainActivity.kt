@@ -151,7 +151,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
         Env.setup(this)
-        val args = arrayOf("mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
+        // TerminalSession passes args as the full argv, so args[0] is the program name.
+        val args = arrayOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
         val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
             Env.envArray(this), 2000, sessionClient)
         session = s
