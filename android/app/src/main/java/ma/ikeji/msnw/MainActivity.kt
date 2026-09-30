@@ -28,6 +28,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
@@ -116,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (tab is Tab.Term) {
             tab.session?.let { term.attachSession(it) }
-            term.requestFocus()
+            showKeyboard()
         }
     }
 
@@ -263,9 +264,7 @@ class MainActivity : AppCompatActivity() {
                 val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
                     env, 2000, sessionClient)
                 tab.session = s
-                if (current === tab) term.attachSession(s)
-                term.requestFocus()
-                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, 0)
+                if (current === tab) { term.attachSession(s); showKeyboard() }
             }
         }.start()
     }
@@ -274,6 +273,14 @@ class MainActivity : AppCompatActivity() {
         tabs.filterIsInstance<Tab.Term>().firstOrNull { it.session === session }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
+    private fun showKeyboard() {
+        term.post {
+            term.requestFocus()
+            WindowInsetsControllerCompat(window, term).show(WindowInsetsCompat.Type.ime())
+            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, InputMethodManager.SHOW_IMPLICIT)
+        }
+    }
 
     private val sessionClient = object : TerminalSessionClient {
         override fun onTextChanged(changedSession: TerminalSession) {
@@ -316,9 +323,7 @@ class MainActivity : AppCompatActivity() {
             }
             return scale
         }
-        override fun onSingleTapUp(e: MotionEvent) {
-            (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, 0)
-        }
+        override fun onSingleTapUp(e: MotionEvent) { showKeyboard() }
         override fun shouldBackButtonBeMappedToEscape() = false
         override fun shouldEnforceCharBasedInput() = true
         override fun shouldUseCtrlSpaceWorkaround() = false

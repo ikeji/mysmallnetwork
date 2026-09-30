@@ -18,7 +18,7 @@
 
     <!-- Terminal: one view, sessions switched per tab -->
     <LinearLayout android:id="@+id/terminal" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:visibility="gone">
-        <com.termux.view.TerminalView android:id="@+id/term" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+        <com.termux.view.TerminalView android:id="@+id/term" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:focusable="true" android:focusableInTouchMode="true"/>
         <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#222222">
             <LinearLayout android:id="@+id/keys" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
                 <Button android:id="@+id/kEsc" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Esc"/>
