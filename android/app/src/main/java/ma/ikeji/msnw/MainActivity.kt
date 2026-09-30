@@ -409,7 +409,7 @@ class MainActivity : AppCompatActivity() {
         }
         override fun onSingleTapUp(e: MotionEvent) { showKeyboard() }
         override fun shouldBackButtonBeMappedToEscape() = false
-        override fun shouldEnforceCharBasedInput() = true
+        override fun shouldEnforceCharBasedInput() = false // let IMEs compose (Japanese input)
         override fun shouldUseCtrlSpaceWorkaround() = false
         override fun isTerminalViewSelected() = true
         override fun copyModeChanged(copyMode: Boolean) {}
