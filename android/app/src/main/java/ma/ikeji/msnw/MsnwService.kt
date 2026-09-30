@@ -59,10 +59,14 @@ class MsnwService : Service() {
 
     // ---- terminal sessions --------------------------------------------------
 
-    /** Starts "msnw mosh" for target in a new pty. Blocking (DNS); call off the main thread. */
-    fun newSession(target: String): Entry {
+    /**
+     * Starts "msnw mosh" for target in a new pty. Must run on the main thread
+     * (TerminalSession creates a Handler there); env comes from
+     * Env.envArray, which the caller computes off the main thread because it
+     * resolves the server name.
+     */
+    fun newSession(target: String, env: Array<String>): Entry {
         Env.setup(this)
-        val env = Env.envArray(this)
         val id = nextId++
         val entry = Entry(id, target, spawn(target, env))
         synchronized(entries) { entries += entry }
@@ -70,10 +74,10 @@ class MsnwService : Service() {
         return entry
     }
 
-    /** Replaces a finished (or stuck) session with a fresh one for the same target. */
-    fun restart(entry: Entry) {
+    /** Replaces a finished (or stuck) session with a fresh one for the same target. Main thread. */
+    fun restart(entry: Entry, env: Array<String>) {
         entry.session.finishIfRunning()
-        entry.session = spawn(entry.target, Env.envArray(this))
+        entry.session = spawn(entry.target, env)
         entry.finished = false
     }
 

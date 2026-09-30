@@ -317,8 +317,8 @@ class MainActivity : AppCompatActivity() {
         Env.addHistory(this, TARGET_HISTORY, target)
         withService { s ->
             Thread {
-                val entry = s.newSession(target) // resolves the server name: off the UI thread
-                runOnUiThread { select(addTermTab(entry)) }
+                val env = Env.envArray(this) // resolves the server name: off the UI thread
+                runOnUiThread { select(addTermTab(s.newSession(target, env))) } // TerminalSession needs the main thread
             }.start()
         }
     }
@@ -334,8 +334,9 @@ class MainActivity : AppCompatActivity() {
     private fun restartSession(tab: Tab.Term) {
         withService { s ->
             Thread {
-                s.restart(tab.entry)
+                val env = Env.envArray(this)
                 runOnUiThread {
+                    s.restart(tab.entry, env)
                     tab.button.text = "T${tab.entry.id}"
                     if (current === tab) { term.attachSession(tab.entry.session); showKeyboard() }
                 }
