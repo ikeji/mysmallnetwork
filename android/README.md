@@ -41,6 +41,12 @@ into the APK. arm64-v8a only for now.
   (Esc, Tab, Ctrl, arrows) sit above the keyboard; Reconnect starts a new
   session. Password prompts from dbclient appear in the terminal.
 
+- msnw is the same static (CGO_ENABLED=0) binary as on other platforms. Its
+  pure-Go resolver reads /etc/resolv.conf, which Android lacks, so the app
+  resolves the rendezvous server with the system resolver and passes the IP
+  in `MSNW_SERVER`. Nothing else in msnw needs DNS. (An Android-specific
+  cgo build with GOOS=android would remove this step if it is ever needed.)
+
 Settings: link key, mosh target (`user@name`), home page, optional server.
 
 ## Licenses
