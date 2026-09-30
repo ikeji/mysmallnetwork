@@ -313,6 +313,17 @@ class MainActivity : AppCompatActivity() {
             input.setText("")
         }
         findViewById<Button>(R.id.termSend).setOnClickListener { sendInput(false) }
+        val inputRow = findViewById<View>(R.id.termInputRow)
+        findViewById<Button>(R.id.kText).setOnClickListener {
+            val show = inputRow.visibility != View.VISIBLE
+            inputRow.visibility = if (show) View.VISIBLE else View.GONE
+            if (show) {
+                input.requestFocus()
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            } else {
+                showKeyboard()
+            }
+        }
         input.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { sendInput(true); true } else false }
         input.setOnKeyListener { _, keyCode, event ->
             if (keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN) { sendInput(true); true } else false
