@@ -14,6 +14,13 @@ import (
 // ALPN is the TLS application protocol for both control and peer connections.
 const ALPN = "msnw/1"
 
+// InitialPacketSize is the QUIC packet size (UDP payload) every msnw
+// connection starts with: the protocol minimum. quic-go's default of 1280
+// does not fit through links with a 1280-byte MTU (Tailscale, IPv6 tunnels),
+// where the handshake would never complete. Path MTU discovery still raises
+// the size on wider paths.
+const InitialPacketSize = 1200
+
 // Message types.
 const (
 	TypeRegister = "register" // exporter -> server

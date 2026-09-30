@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -192,7 +193,17 @@ func Export(args []string) {
 		log.Printf("incoming client %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
 		allow.Add(m.PeerFingerprint)
 		go node.Punch(ctx, m.Session, m.Candidates, 10*time.Second)
-		go node.RelayHello(ctx, node.RelayAddr(m.RelayPort), m.Session, proto.RoleExporter)
+		go func() {
+			conn, err := node.AcceptRelay(ctx, node.RelayAddr(m.RelayPort), m.Session, allow.Allowed)
+			if err != nil {
+				// A deadline just means the client did not come through the relay.
+				if ctx.Err() == nil && !errors.Is(err, context.DeadlineExceeded) {
+					log.Printf("relay session %s: %v", m.Session[:8], err)
+				}
+				return
+			}
+			servePeer(ctx, conn, pol, *linkKey, defaultPort, sessions)
+		}()
 	}
 
 	backoff := time.Second
@@ -218,23 +229,27 @@ func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey str
 		if err != nil {
 			return
 		}
-		go func() {
-			clientVersion, err := peer.AuthenticateAsExporter(ctx, conn, linkKey, defaultPort)
-			if err != nil {
-				log.Printf("peer %s rejected: %v", conn.RemoteAddr(), err)
-				return
-			}
-			log.Printf("peer connected from %s%s", conn.RemoteAddr(), buildinfo.Mismatch("client", clientVersion, "exporter"))
-			mux := tunnel.NewUDPMux(conn)
-			for {
-				st, err := conn.AcceptStream(ctx)
-				if err != nil {
-					log.Printf("peer %s closed: %v", conn.RemoteAddr(), err)
-					return
-				}
-				go serveStream(st, pol, mux, sessions)
-			}
-		}()
+		go servePeer(ctx, conn, pol, linkKey, defaultPort, sessions)
+	}
+}
+
+// servePeer authenticates one client connection and serves its streams until
+// it closes.
+func servePeer(ctx context.Context, conn *quic.Conn, pol *policy, linkKey string, defaultPort int, sessions *resume.Registry) {
+	clientVersion, err := peer.AuthenticateAsExporter(ctx, conn, linkKey, defaultPort)
+	if err != nil {
+		log.Printf("peer %s rejected: %v", conn.RemoteAddr(), err)
+		return
+	}
+	log.Printf("peer connected from %s%s", conn.RemoteAddr(), buildinfo.Mismatch("client", clientVersion, "exporter"))
+	mux := tunnel.NewUDPMux(conn)
+	for {
+		st, err := conn.AcceptStream(ctx)
+		if err != nil {
+			log.Printf("peer %s closed: %v", conn.RemoteAddr(), err)
+			return
+		}
+		go serveStream(st, pol, mux, sessions)
 	}
 }
 

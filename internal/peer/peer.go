@@ -1,7 +1,8 @@
 // Package peer implements the node side of msnw: one UDP socket shared by the
-// control connection to the rendezvous server and by all peer-to-peer QUIC
-// connections, so that the NAT mapping the server observes is the same one
-// peers punch through.
+// control connection to the rendezvous server and by all direct peer-to-peer
+// QUIC connections, so that the NAT mapping the server observes is the same
+// one peers punch through. Relayed connections get a socket of their own
+// each, because the relay tells sessions apart by source address.
 package peer
 
 import (
@@ -86,6 +87,7 @@ func ctrlConfig() *quic.Config {
 		MaxIdleTimeout:       45 * time.Second,
 		KeepAlivePeriod:      15 * time.Second,
 		HandshakeIdleTimeout: 10 * time.Second,
+		InitialPacketSize:    proto.InitialPacketSize,
 	}
 }
 
@@ -96,6 +98,7 @@ func peerConfig() *quic.Config {
 		HandshakeIdleTimeout: 6 * time.Second,
 		MaxIncomingStreams:   4096,
 		EnableDatagrams:      true,
+		InitialPacketSize:    proto.InitialPacketSize,
 	}
 }
 
@@ -159,12 +162,31 @@ func (n *Node) Punch(ctx context.Context, session string, candidates []string, d
 	}
 }
 
-// RelayHello binds our address to session on the relay (sent a few times
+// newRelayTransport binds a socket for a single relay session. The relay
+// knows a session only by the source address of its packets, so two sessions
+// sent from one socket would take over each other's binding: the newer one
+// wins and the older connection stops receiving.
+func newRelayTransport() (*quic.Transport, error) {
+	uc, err := net.ListenUDP("udp", nil)
+	if err != nil {
+		return nil, err
+	}
+	return &quic.Transport{Conn: uc}, nil
+}
+
+// closeRelayTransport releases a transport from newRelayTransport
+// (Transport.Close leaves a socket it did not create open).
+func closeRelayTransport(tr *quic.Transport) {
+	tr.Close()
+	tr.Conn.Close()
+}
+
+// relayHello binds tr's address to session on the relay (sent a few times
 // because it is plain UDP).
-func (n *Node) RelayHello(ctx context.Context, relay *net.UDPAddr, session string, role byte) {
+func relayHello(ctx context.Context, tr *quic.Transport, relay *net.UDPAddr, session string, role byte) {
 	pkt := proto.RelayHello(session, role)
 	for i := 0; i < 4; i++ {
-		n.Transport.WriteTo(pkt, relay)
+		tr.WriteTo(pkt, relay)
 		select {
 		case <-ctx.Done():
 			return
@@ -226,9 +248,10 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 }
 
 type dialResult struct {
-	conn *quic.Conn
-	via  string
-	err  error
+	conn  *quic.Conn
+	via   string
+	relay bool
+	err   error
 }
 
 // DialPeer races direct connections to every candidate while punching, and
@@ -238,15 +261,23 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
+	// The relay path gets its own socket (see newRelayTransport); without one
+	// we fall back to the shared socket, which works for a single session.
+	relayTr, err := newRelayTransport()
+	if err != nil {
+		n.logf("relay socket: %v", err)
+		relayTr = n.Transport
+	}
+
 	go n.Punch(ctx, info.Session, info.Candidates, 10*time.Second)
-	go n.RelayHello(ctx, info.Relay, info.Session, proto.RoleClient)
+	go relayHello(ctx, relayTr, info.Relay, info.Session, proto.RoleClient)
 
 	tlsConf := n.Ident.ClientConfig(info.Fingerprint)
 	results := make(chan dialResult, len(info.Candidates)+maxLearned+1)
 	var mu sync.Mutex
 	attempts := 0
 	tried := map[string]bool{}
-	dial := func(addrStr, via string, delay time.Duration) {
+	dial := func(tr *quic.Transport, addrStr, via string, delay time.Duration) {
 		mu.Lock()
 		if tried[addrStr] || attempts >= cap(results) {
 			mu.Unlock()
@@ -269,11 +300,11 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 				results <- dialResult{err: err}
 				return
 			}
-			conn, err := n.Transport.Dial(ctx, addr, tlsConf, peerConfig())
+			conn, err := tr.Dial(ctx, addr, tlsConf, peerConfig())
 			if err != nil {
 				n.logf("dial %s: %v", via, err)
 			}
-			results <- dialResult{conn: conn, via: via, err: err}
+			results <- dialResult{conn: conn, via: via, relay: tr == relayTr, err: err}
 		}()
 	}
 	relayDelay := 1500 * time.Millisecond
@@ -282,10 +313,10 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 		relayDelay = 0
 	} else {
 		for _, c := range info.Candidates {
-			dial(c, "direct "+c, 0)
+			dial(n.Transport, c, "direct "+c, 0)
 		}
 	}
-	dial(info.Relay.String(), "relay "+info.Relay.String(), relayDelay)
+	dial(relayTr, info.Relay.String(), "relay "+info.Relay.String(), relayDelay)
 
 	// A punch from the exporter may arrive from an address the server never
 	// saw (e.g. the exporter sits behind a symmetric NAT and we are reachable
@@ -293,12 +324,13 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 	if !forceRelay {
 		go n.learnFromPunches(ctx, info.Session, func(addr string) {
 			n.logf("learned candidate %s from punch", addr)
-			dial(addr, "direct "+addr+" (learned)", 0)
+			dial(n.Transport, addr, "direct "+addr+" (learned)", 0)
 		})
 	}
 
 	var winner *quic.Conn
 	var via string
+	var viaRelay bool
 	var firstErr error
 	for i := 0; ; i++ {
 		mu.Lock()
@@ -315,10 +347,20 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 			continue
 		}
 		if winner == nil {
-			winner, via = r.conn, r.via
+			winner, via, viaRelay = r.conn, r.via, r.relay
 			cancel() // abort the remaining handshakes
 		} else {
 			r.conn.CloseWithError(0, "lost the race")
+		}
+	}
+	if relayTr != n.Transport {
+		if viaRelay {
+			go func() { // the socket lives as long as the connection
+				<-winner.Context().Done()
+				closeRelayTransport(relayTr)
+			}()
+		} else {
+			closeRelayTransport(relayTr)
 		}
 	}
 	if winner == nil {
@@ -421,6 +463,40 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 // admits.
 func (n *Node) Listen(allow func(fp string) bool) (*quic.Listener, error) {
 	return n.Transport.Listen(n.Ident.ServerConfig(allow), peerConfig())
+}
+
+// relayAcceptWindow is how long the exporter keeps a relay socket waiting for
+// the client; DialPeer gives up after 20 seconds.
+const relayAcceptWindow = 30 * time.Second
+
+// AcceptRelay binds a dedicated socket to session on the relay (see
+// newRelayTransport) and returns the client's connection if it arrives that
+// way. It fails with a deadline error when the client got through directly
+// or not at all. The socket is released when the connection ends.
+func (n *Node) AcceptRelay(ctx context.Context, relay *net.UDPAddr, session string, allow func(fp string) bool) (*quic.Conn, error) {
+	tr, err := newRelayTransport()
+	if err != nil {
+		return nil, err
+	}
+	ln, err := tr.Listen(n.Ident.ServerConfig(allow), peerConfig())
+	if err != nil {
+		closeRelayTransport(tr)
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, relayAcceptWindow)
+	defer cancel()
+	go relayHello(ctx, tr, relay, session, proto.RoleExporter)
+	conn, err := ln.Accept(ctx)
+	ln.Close() // one connection per session; an accepted one is not affected
+	if err != nil {
+		closeRelayTransport(tr)
+		return nil, err
+	}
+	go func() {
+		<-conn.Context().Done()
+		closeRelayTransport(tr)
+	}()
+	return conn, nil
 }
 
 // ---- peer authentication (link key) ----------------------------------------

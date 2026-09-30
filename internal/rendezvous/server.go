@@ -82,8 +82,9 @@ func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	}
 	defer tr.Close()
 	ln, err := tr.Listen(s.Ident.ServerConfig(nil), &quic.Config{
-		MaxIdleTimeout:  45 * time.Second,
-		KeepAlivePeriod: 15 * time.Second,
+		MaxIdleTimeout:    45 * time.Second,
+		KeepAlivePeriod:   15 * time.Second,
+		InitialPacketSize: proto.InitialPacketSize,
 	})
 	if err != nil {
 		return err
@@ -273,6 +274,8 @@ func newSession() string {
 
 // relay pairs two UDP endpoints per session and forwards packets between them
 // verbatim. Sessions are created by handleConnect and bound by hello packets.
+// A source address belongs to one session at a time (the latest it said hello
+// for), so nodes use a separate socket for every session.
 type relay struct {
 	conn *net.UDPConn
 	mu   sync.Mutex

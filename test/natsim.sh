@@ -164,6 +164,20 @@ expect=direct
 if [ $expect != any ] && ! grep -q "via $expect" "$LOG/client-auto.log"; then
 	echo "natsim: expected $expect for $MODE_A:$MODE_B"; rc=1
 fi
+
+# Two relayed clients at once: the relay must keep their sessions apart. The
+# first connects, idles while the second connects, and only then talks. (The
+# second used to take over the exporter's relay binding and cut off the first.)
+(sleep 4; echo hi-first) | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" client -v -n sitea >"$LOG/first.out" 2>"$LOG/client-first.log" &
+first=$!
+sleep 2
+second=$(echo hi-second | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" client -v -n sitea 2>"$LOG/client-second.log" || true)
+wait $first || true
+if [ "$(cat "$LOG/first.out")" = "echo:hi-first" ] && [ "$second" = "echo:hi-second" ]; then
+	echo "natsim: [$MODE/two-relayed] OK"
+else
+	echo "natsim: [$MODE/two-relayed] FAILED (got '$(cat "$LOG/first.out")' and '$second'); logs in $LOG"; rc=1
+fi
 kill $(jobs -p) 2>/dev/null
 [ $rc -eq 0 ] && rm -rf "$LOG"
 exit $rc

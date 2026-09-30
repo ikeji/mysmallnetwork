@@ -281,9 +281,9 @@ child log there.
   flow's own stream. There is one flow per local source address; it closes
   after 10 minutes of silence.
 - **One socket**: each node uses a single UDP socket both for the control
-  connection to the server and for peer connections, so the public address the
-  server observes on the control connection is exactly the NAT mapping the
-  peers punch through (STUN-like).
+  connection to the server and for direct peer connections, so the public
+  address the server observes on the control connection is exactly the NAT
+  mapping the peers punch through (STUN-like).
 - **Introduction**: when the client looks up the name given with `-n`, the
   server hands the exporter the client's candidate addresses (reflexive plus
   LAN) and the client the exporter's.
@@ -295,6 +295,12 @@ child log there.
 - **Relay**: if no direct connection is up after 1.5 seconds, QUIC is set up
   through the server's relay port. The relay forwards UDP verbatim, so
   encryption stays end-to-end. Symmetric-to-symmetric NATs end up here.
+  The relay tells sessions apart by source address only, so both sides use a
+  fresh UDP socket for every relayed session; several clients can then share
+  one exporter through the relay without taking over each other's binding.
+- **Packet size**: connections start with 1200-byte QUIC packets (the protocol
+  minimum) so that the handshake also fits through 1280-byte-MTU links such as
+  Tailscale; path MTU discovery raises the size afterwards.
 - **Namespaces**: the exporter registers `HMAC(link key, name)` rather than the
   name, and the client looks up the same value. The server learns neither the
   name nor the key, and different keys never collide even for the same name.
