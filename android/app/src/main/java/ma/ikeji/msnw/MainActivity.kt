@@ -323,10 +323,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Tab label: the title set by the shell (OSC 0/2), else T<id>; "!" marks a finished session. */
+    private fun termLabel(tab: Tab.Term): String {
+        val title = tab.entry.session.title?.takeIf { it.isNotBlank() }?.take(16) ?: "T${tab.entry.id}"
+        return if (tab.entry.finished) "$title!" else title
+    }
+
     private fun addTermTab(entry: MsnwService.Entry): Tab.Term {
         lateinit var tab: Tab.Term
-        val button = makeTabButton("T${entry.id}" + if (entry.finished) "!" else "") { tab }
+        val button = makeTabButton("") { tab }
         tab = Tab.Term(button, entry)
+        button.text = termLabel(tab)
         tabs.add(tab)
         return tab
     }
@@ -337,7 +344,7 @@ class MainActivity : AppCompatActivity() {
                 val env = Env.envArray(this)
                 runOnUiThread {
                     s.restart(tab.entry, env)
-                    tab.button.text = "T${tab.entry.id}"
+                    tab.button.text = termLabel(tab)
                     if (current === tab) { term.attachSession(tab.entry.session); showKeyboard() }
                 }
             }.start()
@@ -361,10 +368,12 @@ class MainActivity : AppCompatActivity() {
         override fun onTextChanged(changedSession: TerminalSession) {
             if ((current as? Tab.Term)?.entry?.session === changedSession) term.onScreenUpdated()
         }
-        override fun onTitleChanged(changedSession: TerminalSession) {}
+        override fun onTitleChanged(changedSession: TerminalSession) {
+            termTabOf(changedSession)?.let { it.button.text = termLabel(it) }
+        }
         override fun onSessionFinished(finishedSession: TerminalSession) {
             runOnUiThread {
-                termTabOf(finishedSession)?.button?.let { it.text = it.text.toString().trimEnd('!') + "!" }
+                termTabOf(finishedSession)?.let { it.button.text = termLabel(it) }
                 if ((current as? Tab.Term)?.entry?.session === finishedSession) toast("session ended (exit ${finishedSession.exitStatus}); Reconnect or close the tab")
             }
         }
