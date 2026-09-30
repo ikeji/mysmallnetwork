@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/ikeji/mysmallnetwork/internal/resume"
 	"github.com/ikeji/mysmallnetwork/internal/socks5"
 	"github.com/ikeji/mysmallnetwork/internal/tunnel"
+	"github.com/ikeji/mysmallnetwork/internal/webterm"
 )
 
 // pool keeps one authenticated peer connection per exporter name and redials
@@ -370,16 +372,20 @@ func Client(args []string) {
 	args = netutil.OptionalValueFlag(args, "l", "auto")
 	args = netutil.OptionalValueFlag(args, "socks5", "127.0.0.1:1080")
 	args = netutil.OptionalValueFlag(args, "http-proxy", "127.0.0.1:8080")
+	args = netutil.OptionalValueFlag(args, "webterm", "127.0.0.1:8081")
 	fs := flag.NewFlagSet("msnw client", flag.ExitOnError)
 	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in proxy modes)")
 	listen := fs.String("l", "", "listen locally (port, :port, host:port, or udp:port; bare -l uses the exporter's port)")
 	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
 	httpProxy := fs.String("http-proxy", "", "run an HTTP proxy (bare --http-proxy listens on 127.0.0.1:8080); may be combined with --socks5")
+	webTerm := fs.String("webterm", "", "serve a browser terminal (ssh through the tunnel; bare --webterm listens on 127.0.0.1:8081)")
+	sshKey := fs.String("ssh-key", "", "private key file for the browser terminal's ssh login (password otherwise)")
+	confDir := fs.String("config-dir", defaultConfigDir(), "directory for known_hosts and other state")
 	nf := addNodeFlags(fs)
 	fs.Parse(args)
 
-	if *nf.linkKey == "" || (*name == "" && *socks == "" && *httpProxy == "") {
-		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] | --http-proxy [addr] [-n NAME]   (-s server, -server-key K)")
+	if *nf.linkKey == "" || (*name == "" && *socks == "" && *httpProxy == "" && *webTerm == "") {
+		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] | --http-proxy [addr] | --webterm [addr] [-n NAME]   (-s server, -server-key K)")
 		os.Exit(2)
 	}
 	log.SetOutput(os.Stderr)
@@ -391,12 +397,15 @@ func Client(args []string) {
 	ctx := p.ctx
 
 	switch {
-	case *socks != "" || *httpProxy != "":
+	case *socks != "" || *httpProxy != "" || *webTerm != "":
 		if *socks != "" {
 			go runSocks(ctx, p, *socks, *name)
 		}
 		if *httpProxy != "" {
 			go runHTTPProxy(ctx, p, *httpProxy, *name)
+		}
+		if *webTerm != "" {
+			go runWebTerm(ctx, p, *webTerm, *sshKey, *confDir)
 		}
 		<-ctx.Done()
 	case *listen != "":
@@ -616,6 +625,36 @@ func listenProxy(ctx context.Context, kind, listen, def string) net.Listener {
 		log.Printf("%s proxy on %s (other hosts are reached directly)", kind, ln.Addr())
 	}
 	return ln
+}
+
+func defaultConfigDir() string {
+	if d, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(d, "msnw")
+	}
+	return "."
+}
+
+func runWebTerm(ctx context.Context, p *pool, listen, sshKey, confDir string) {
+	addr, err := netutil.ParseListen(listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("browser terminal on http://%s/ (known_hosts in %s)", ln.Addr(), confDir)
+	srv := &webterm.Server{
+		Dial: func(ctx context.Context, name, port string) (net.Conn, error) {
+			return p.open(ctx, name, port)
+		},
+		KnownHosts: filepath.Join(confDir, "known_hosts"),
+		KeyFile:    sshKey,
+		Logf:       log.Printf,
+	}
+	if err := srv.Serve(ctx, ln); err != nil {
+		log.Print(err)
+	}
 }
 
 func runSocks(ctx context.Context, p *pool, listen, def string) {

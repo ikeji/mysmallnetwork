@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>msnw terminal</title>
+<link rel="stylesheet" href="/static/xterm.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font-family: system-ui, sans-serif; }
+  #form { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; background: #222; }
+  #form input { flex: 1 1 140px; padding: 6px; background: #111; color: #eee; border: 1px solid #444; }
+  #form button { padding: 6px 12px; }
+  #status { padding: 2px 8px; font-size: 12px; color: #9c9; background: #111; white-space: pre; }
+  #term { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  #wrap { display: flex; flex-direction: column; height: 100%; }
+  #termbox { position: relative; flex: 1; min-height: 0; }
+  #keys { display: none; gap: 4px; padding: 4px; background: #222; overflow-x: auto; }
+  #keys button { padding: 6px 10px; }
+  body.connected #form { display: none; }
+  body.connected #keys { display: flex; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <form id="form">
+    <input id="target" placeholder="user@name[:port]" autocapitalize="none" autocorrect="off" spellcheck="false">
+    <input id="password" type="password" placeholder="password (empty = key only)">
+    <button type="submit">Connect</button>
+  </form>
+  <div id="keys">
+    <button data-key="\x1b">Esc</button>
+    <button data-key="\t">Tab</button>
+    <button data-mod="ctrl">Ctrl</button>
+    <button data-key="\x1b[A">↑</button>
+    <button data-key="\x1b[B">↓</button>
+    <button data-key="\x1b[D">←</button>
+    <button data-key="\x1b[C">→</button>
+    <button data-key="\x1b[1~">Home</button>
+    <button data-key="\x1b[4~">End</button>
+    <button id="disconnect" type="button">Disconnect</button>
+  </div>
+  <div id="status">not connected</div>
+  <div id="termbox"><div id="term"></div></div>
+</div>
+<script src="/static/xterm.js"></script>
+<script src="/static/addon-fit.js"></script>
+<script>
+(function () {
+  var term = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 5000,
+                            theme: { background: '#000000' } });
+  var fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(document.getElementById('term'));
+  fit.fit();
+  var ws = null, ctrl = false;
+  var status = document.getElementById('status');
+  var params = new URLSearchParams(location.search);
+  var targetInput = document.getElementById('target');
+  targetInput.value = params.get('target') || localStorage.getItem('msnw.target') || '';
+  function say(s) { status.textContent = s; }
+  function send(data) { if (ws && ws.readyState === 1) ws.send(data); }
+
+  term.onData(function (d) {
+    if (ctrl && d.length === 1) { ctrl = false; var c = d.toUpperCase().charCodeAt(0); if (c >= 64 && c < 96) d = String.fromCharCode(c - 64); }
+    send(new TextEncoder().encode(d));
+  });
+  term.onResize(function (sz) { send(JSON.stringify({ resize: [sz.cols, sz.rows] })); });
+  window.addEventListener('resize', function () { fit.fit(); });
+
+  function connect(target, password) {
+    localStorage.setItem('msnw.target', target);
+    var proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+    ws = new WebSocket(proto + location.host + '/ws');
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function () {
+      fit.fit();
+      ws.send(JSON.stringify({ target: target, password: password, cols: term.cols, rows: term.rows }));
+      document.body.classList.add('connected');
+      setTimeout(function () { fit.fit(); term.focus(); }, 50);
+    };
+    ws.onmessage = function (ev) {
+      if (typeof ev.data === 'string') {
+        if (ev.data.charCodeAt(0) === 0) say(ev.data.slice(1));
+        return;
+      }
+      term.write(new Uint8Array(ev.data));
+    };
+    ws.onclose = function () {
+      say(status.textContent + ' — disconnected');
+      document.body.classList.remove('connected');
+      ws = null;
+    };
+    ws.onerror = function () { say('websocket error'); };
+  }
+
+  document.getElementById('form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var t = targetInput.value.trim();
+    if (!t) return;
+    term.reset();
+    connect(t, document.getElementById('password').value);
+    document.getElementById('password').value = '';
+  });
+  document.getElementById('disconnect').addEventListener('click', function () { if (ws) ws.close(); });
+  Array.prototype.forEach.call(document.querySelectorAll('#keys button[data-key]'), function (b) {
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-key').replace(/\\x1b/g, '\x1b').replace(/\\t/g, '\t');
+      send(new TextEncoder().encode(k)); term.focus();
+    });
+  });
+  document.querySelector('#keys button[data-mod]').addEventListener('click', function () { ctrl = !ctrl; term.focus(); });
+  if (params.get('target') && params.get('autoconnect')) connect(params.get('target'), '');
+})();
+</script>
+</body>
+</html>
