@@ -2,7 +2,10 @@ package ma.ikeji.msnw
 
 import android.content.Context
 import android.system.Os
+import android.util.Log
 import java.io.File
+import java.net.Inet6Address
+import java.net.InetAddress
 
 /**
  * Lays out the app's private "prefix": a bin directory of symlinks to the
@@ -51,7 +54,31 @@ object Env {
         entries.forEach { copyAssets(ctx, "$path/$it", File(dst, it)) }
     }
 
-    /** Environment for msnw and the programs it spawns. */
+    const val DEFAULT_SERVER = "relay.ikeji.ma:4433"
+
+    /**
+     * The rendezvous server as "ip:port". msnw is a static Go binary whose
+     * resolver needs /etc/resolv.conf, which Android does not have, so the
+     * name is resolved here with the system resolver. Blocking: call off the
+     * main thread. Falls back to the name if resolution fails.
+     */
+    fun resolvedServer(ctx: Context): String {
+        val configured = prefs(ctx).getString("server", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_SERVER
+        val i = configured.lastIndexOf(':')
+        val host = if (i > 0 && !configured.startsWith("[")) configured.substring(0, i) else configured
+        val port = if (i > 0) configured.substring(i + 1) else "4433"
+        return try {
+            val addrs = InetAddress.getAllByName(host)
+            val a = addrs.firstOrNull { it !is Inet6Address } ?: addrs.first() // prefer IPv4: the relay speaks v4
+            val ip = a.hostAddress ?: return configured
+            if (a is Inet6Address) "[$ip]:$port" else "$ip:$port"
+        } catch (e: Exception) {
+            Log.w("msnw", "cannot resolve $host: $e")
+            configured
+        }
+    }
+
+    /** Environment for msnw and the programs it spawns. Blocking (DNS); call off the main thread. */
     fun environment(ctx: Context): Map<String, String> {
         val p = prefs(ctx)
         val env = linkedMapOf(
@@ -65,7 +92,7 @@ object Env {
             "MSNW_DBCLIENT" to File(bin(ctx), "dbclient").absolutePath,
             "MSNW_LOG" to logFile(ctx).absolutePath,
         )
-        p.getString("server", "")?.takeIf { it.isNotBlank() }?.let { env["MSNW_SERVER"] = it }
+        env["MSNW_SERVER"] = resolvedServer(ctx)
         return env
     }
 

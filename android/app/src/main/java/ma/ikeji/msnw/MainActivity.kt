@@ -252,14 +252,22 @@ class MainActivity : AppCompatActivity() {
         tab.session?.finishIfRunning()
         val target = Env.prefs(this).getString("target", "") ?: ""
         Env.setup(this)
-        // TerminalSession passes args as the full argv, so args[0] is the program name.
-        val args = arrayOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
-        val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
-            Env.envArray(this), 2000, sessionClient)
-        tab.session = s
-        if (current === tab) term.attachSession(s)
-        term.requestFocus()
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, 0)
+        tab.button.text = tab.button.text.toString().trimEnd('!')
+        // Building the environment resolves the server name (network I/O), so do it off the UI thread.
+        Thread {
+            val env = Env.envArray(this)
+            runOnUiThread {
+                if (tab !in tabs) return@runOnUiThread
+                // TerminalSession passes args as the full argv, so args[0] is the program name.
+                val args = arrayOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
+                val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
+                    env, 2000, sessionClient)
+                tab.session = s
+                if (current === tab) term.attachSession(s)
+                term.requestFocus()
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, 0)
+            }
+        }.start()
     }
 
     private fun termTabOf(session: TerminalSession): Tab.Term? =
