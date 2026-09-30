@@ -305,6 +305,18 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kDown).setOnClickListener { send("\u001b[B") }
         findViewById<Button>(R.id.kLeft).setOnClickListener { send("\u001b[D") }
         findViewById<Button>(R.id.kRight).setOnClickListener { send("\u001b[C") }
+        // Text input row for IMEs that cannot type into the terminal view directly (Japanese etc.).
+        val input = findViewById<EditText>(R.id.termInput)
+        val sendInput = { newline: Boolean ->
+            val text = input.text.toString()
+            send(if (newline) text + "\r" else text)
+            input.setText("")
+        }
+        findViewById<Button>(R.id.termSend).setOnClickListener { sendInput(false) }
+        input.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { sendInput(true); true } else false }
+        input.setOnKeyListener { _, keyCode, event ->
+            if (keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN) { sendInput(true); true } else false
+        }
         findViewById<Button>(R.id.kReconnect).setOnClickListener { (current as? Tab.Term)?.let { restartSession(it) } }
         findViewById<Button>(R.id.kClose).setOnClickListener { (current as? Tab.Term)?.let { closeTab(it) } }
     }

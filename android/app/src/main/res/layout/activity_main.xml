@@ -30,6 +30,13 @@
                 <Button android:id="@+id/kClose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Close tab"/>
             </LinearLayout>
         </HorizontalScrollView>
+        <!-- Text input row: type with any IME (e.g. Japanese) here, then send it to the terminal -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:background="#222222">
+            <EditText android:id="@+id/termInput" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:inputType="text|textMultiLine|textNoSuggestions" android:imeOptions="actionSend|flagNoEnterAction" android:maxLines="3"
+                android:hint="text to send (Enter = send + newline)" android:textColor="#ffffff" android:textColorHint="#888888" android:textSize="14sp"/>
+            <Button android:id="@+id/termSend" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Send"/>
+        </LinearLayout>
     </LinearLayout>
 
     <!-- "+" screen: open tabs, settings -->
