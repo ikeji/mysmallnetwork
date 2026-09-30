@@ -127,6 +127,7 @@ object Env {
             "TERM" to "xterm-256color",
             "TERMINFO" to terminfo(ctx).absolutePath,
             "LANG" to "en_US.UTF-8",
+            "MOSH_TITLE_NOPREFIX" to "1", // mosh-client would otherwise prefix "[mosh] " to the title
             "MSNW_KEY" to (p.getString("key", "") ?: ""),
             "MSNW_DBCLIENT" to File(bin(ctx), "dbclient").absolutePath,
             "MSNW_LOG" to logFile(ctx).absolutePath,
