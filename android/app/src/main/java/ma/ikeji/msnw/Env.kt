@@ -26,6 +26,21 @@ object Env {
     fun logFile(ctx: Context): File = File(ctx.filesDir, "msnw.log")
     fun sshKey(ctx: Context): File = File(home(ctx), ".ssh/id_msnw")
 
+    /** Newline-separated most-recent-first history lists kept in the prefs. */
+    fun history(ctx: Context, key: String): List<String> =
+        prefs(ctx).getString(key, "")?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+
+    fun addHistory(ctx: Context, key: String, value: String) {
+        val v = value.trim()
+        if (v.isEmpty()) return
+        val list = listOf(v) + history(ctx, key).filter { it != v }
+        prefs(ctx).edit().putString(key, list.take(20).joinToString("\n")).apply()
+    }
+
+    fun removeHistory(ctx: Context, key: String, value: String) {
+        prefs(ctx).edit().putString(key, history(ctx, key).filter { it != value }.joinToString("\n")).apply()
+    }
+
     /**
      * Generates the ssh key pair (ed25519, dropbear format) if it does not
      * exist and returns the public key line to add to authorized_keys on the

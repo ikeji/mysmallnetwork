@@ -117,28 +117,53 @@ class MainActivity : AppCompatActivity() {
         setupTerminal()
         setupSettings()
         setupSshKey()
-        findViewById<Button>(R.id.newBrowser).setOnClickListener { select(newBrowserTab(homeUrl())) }
-        findViewById<Button>(R.id.newTerminal).setOnClickListener { newTerminalTab() }
+        setupLauncher()
         findViewById<Button>(R.id.tabSettings).setOnClickListener { showSettings() }
-        if (Env.prefs(this).getString("key", "").isNullOrBlank()) {
-            showSettings()
-        } else {
+        if (!Env.prefs(this).getString("key", "").isNullOrBlank()) {
             MsnwService.start(this)
             bind()
-            val saved = Env.prefs(this).getString("open_urls", "")?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
-            val urls = if (saved.isEmpty()) listOf(homeUrl()) else saved
-            urls.forEach { newBrowserTab(it) }
-            select(tabs.first())
+        }
+        showSettings() // the "+" screen: open tabs from history or by typing
+    }
+
+    // ---- "+" screen: open web / mosh tabs ------------------------------------
+
+    private fun setupLauncher() {
+        val urlEdit = findViewById<EditText>(R.id.openUrl)
+        val openUrl = {
+            val u = urlEdit.text.toString().trim()
+            if (u.isNotEmpty()) { urlEdit.setText(""); select(newBrowserTab(if (u.contains("://")) u else "http://$u")) }
+        }
+        findViewById<Button>(R.id.openUrlBtn).setOnClickListener { openUrl() }
+        urlEdit.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { openUrl(); true } else false }
+
+        val targetEdit = findViewById<EditText>(R.id.openTarget)
+        val openTarget = {
+            val t = targetEdit.text.toString().trim()
+            if (t.isNotEmpty()) { targetEdit.setText(""); newTerminalTab(t) }
+        }
+        findViewById<Button>(R.id.openTargetBtn).setOnClickListener { openTarget() }
+        targetEdit.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { openTarget(); true } else false }
+    }
+
+    /** Fills a history list with one row per entry: tap opens, long-press forgets. */
+    private fun fillHistory(container: LinearLayout, key: String, open: (String) -> Unit) {
+        container.removeAllViews()
+        Env.history(this, key).forEach { item ->
+            val row = Button(this, null, android.R.attr.borderlessButtonStyle)
+            row.text = item
+            row.isAllCaps = false
+            row.setTextColor(Color.WHITE)
+            row.gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+            row.setOnClickListener { open(item) }
+            row.setOnLongClickListener { Env.removeHistory(this, key, item); fillHistory(container, key, open); true }
+            container.addView(row, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
 
-    private fun homeUrl() = Env.prefs(this).getString("home", "") ?: ""
-
-    override fun onStop() {
-        // Remember open pages so they can be reopened after a restart.
-        val urls = tabs.filterIsInstance<Tab.Browser>().mapNotNull { it.web.url }.filter { it.isNotBlank() }
-        Env.prefs(this).edit().putString("open_urls", urls.joinToString("\n")).apply()
-        super.onStop()
+    private fun refreshHistories() {
+        fillHistory(findViewById(R.id.urlHistory), URL_HISTORY) { select(newBrowserTab(it)) }
+        fillHistory(findViewById(R.id.targetHistory), TARGET_HISTORY) { newTerminalTab(it) }
     }
 
     // ---- tab strip ----------------------------------------------------------
@@ -185,6 +210,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.terminal).visibility = View.GONE
         tabs.forEach { it.button.setTextColor(Color.WHITE); if (it is Tab.Browser) it.view.visibility = View.GONE }
         findViewById<View>(R.id.settings).visibility = View.VISIBLE
+        refreshHistories()
         refreshLog()
     }
 
@@ -232,7 +258,10 @@ class MainActivity : AppCompatActivity() {
         tab = Tab.Browser(button, column, web, url)
         tabs.add(tab)
         web.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
+            override fun onPageFinished(view: WebView?, u: String?) {
+                url.setText(u ?: "")
+                if (!u.isNullOrBlank() && u != "about:blank") Env.addHistory(this@MainActivity, URL_HISTORY, u)
+            }
         }
         web.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
@@ -280,14 +309,12 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kClose).setOnClickListener { (current as? Tab.Term)?.let { closeTab(it) } }
     }
 
-    private fun newTerminalTab() {
-        val p = Env.prefs(this)
-        val target = p.getString("target", "") ?: ""
-        if (target.isBlank() || p.getString("key", "").isNullOrBlank()) {
-            toast("Set the link key and mosh target in Settings")
-            showSettings()
+    private fun newTerminalTab(target: String) {
+        if (Env.prefs(this).getString("key", "").isNullOrBlank()) {
+            toast("Set the link key first")
             return
         }
+        Env.addHistory(this, TARGET_HISTORY, target)
         withService { s ->
             Thread {
                 val entry = s.newSession(target) // resolves the server name: off the UI thread
@@ -399,25 +426,17 @@ class MainActivity : AppCompatActivity() {
     private fun setupSettings() {
         val p = Env.prefs(this)
         val key = findViewById<EditText>(R.id.prefKey)
-        val target = findViewById<EditText>(R.id.prefTarget)
-        val home = findViewById<EditText>(R.id.prefHome)
         val server = findViewById<EditText>(R.id.prefServer)
         key.setText(p.getString("key", ""))
-        target.setText(p.getString("target", ""))
-        home.setText(p.getString("home", ""))
         server.setText(p.getString("server", ""))
         findViewById<Button>(R.id.save).setOnClickListener {
             p.edit()
                 .putString("key", key.text.toString().trim())
-                .putString("target", target.text.toString().trim())
-                .putString("home", home.text.toString().trim())
                 .putString("server", server.text.toString().trim())
                 .apply()
             MsnwService.start(this, restartProxy = true)
             bind()
             toast("saved")
-            val first = tabs.firstOrNull()
-            if (first != null) select(first) else select(newBrowserTab(homeUrl()))
         }
     }
 
@@ -441,6 +460,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshLog() {
         findViewById<TextView>(R.id.log).text = MsnwService.logTail(this)
+    }
+
+    companion object {
+        const val URL_HISTORY = "url_history"
+        const val TARGET_HISTORY = "target_history"
     }
 
     override fun onDestroy() {

@@ -55,7 +55,10 @@ into the APK. arm64-v8a only for now.
   in `MSNW_SERVER`. Nothing else in msnw needs DNS. (An Android-specific
   cgo build with GOOS=android would remove this step if it is ever needed.)
 
-Settings: link key, mosh target (`user@name`), home page, optional server.
+The app opens on the "+" screen (also reached from the tab strip): type a URL
+or a mosh target (`user@name`) to open a tab, or pick one from the history
+lists below the inputs (long-press an entry to forget it). Settings on the
+same screen: link key, optional server, ssh key, and the msnw log tail.
 
 **SSH key**: "Generate / show key" in Settings creates an ed25519 key pair with
 the bundled `dropbearkey` (kept in the app's private `home/.ssh/id_msnw`) and
