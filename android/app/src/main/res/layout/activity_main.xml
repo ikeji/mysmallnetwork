@@ -27,6 +27,8 @@
                 <Button android:id="@+id/kDown" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="↓"/>
                 <Button android:id="@+id/kLeft" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="←"/>
                 <Button android:id="@+id/kRight" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="→"/>
+                <Button android:id="@+id/kPgUp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PgUp"/>
+                <Button android:id="@+id/kPgDn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PgDn"/>
                 <Button android:id="@+id/kReconnect" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Reconnect"/>
                 <Button android:id="@+id/kClose" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Close tab"/>
             </LinearLayout>

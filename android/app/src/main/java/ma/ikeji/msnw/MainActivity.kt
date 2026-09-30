@@ -305,6 +305,8 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kDown).setOnClickListener { send("\u001b[B") }
         findViewById<Button>(R.id.kLeft).setOnClickListener { send("\u001b[D") }
         findViewById<Button>(R.id.kRight).setOnClickListener { send("\u001b[C") }
+        findViewById<Button>(R.id.kPgUp).setOnClickListener { send("\u001b[5~") }
+        findViewById<Button>(R.id.kPgDn).setOnClickListener { send("\u001b[6~") }
         // Text input row for IMEs that cannot type into the terminal view directly (Japanese etc.).
         val input = findViewById<EditText>(R.id.termInput)
         val sendInput = { newline: Boolean ->
