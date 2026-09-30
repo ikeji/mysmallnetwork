@@ -24,6 +24,29 @@ object Env {
     fun terminfo(ctx: Context): File = File(ctx.filesDir, "terminfo")
     fun msnw(ctx: Context): File = File(bin(ctx), "msnw")
     fun logFile(ctx: Context): File = File(ctx.filesDir, "msnw.log")
+    fun sshKey(ctx: Context): File = File(home(ctx), ".ssh/id_msnw")
+
+    /**
+     * Generates the ssh key pair (ed25519, dropbear format) if it does not
+     * exist and returns the public key line to add to authorized_keys on the
+     * exporter host. Blocking: runs dropbearkey.
+     */
+    fun ensureSshKey(ctx: Context): String {
+        val key = sshKey(ctx)
+        val bin = bin(ctx)
+        if (!key.exists()) {
+            key.parentFile?.mkdirs()
+            val gen = ProcessBuilder(File(bin, "dropbearkey").absolutePath, "-t", "ed25519", "-f", key.absolutePath)
+                .redirectErrorStream(true).start()
+            val out = gen.inputStream.bufferedReader().readText()
+            if (gen.waitFor() != 0) throw RuntimeException("dropbearkey failed: $out")
+        }
+        val show = ProcessBuilder(File(bin, "dropbearkey").absolutePath, "-y", "-f", key.absolutePath)
+            .redirectErrorStream(true).start()
+        val out = show.inputStream.bufferedReader().readText()
+        show.waitFor()
+        return out.lines().firstOrNull { it.startsWith("ssh-") } ?: throw RuntimeException("no public key in: $out")
+    }
 
     /** Creates directories and symlinks; safe to call on every start. */
     fun setup(ctx: Context) {
@@ -34,6 +57,7 @@ object Env {
             "msnw" to "libmsnw.so",
             "mosh-client" to "libmosh-client.so",
             "dbclient" to "libdbclient.so",
+            "dropbearkey" to "libdropbearkey.so",
             "ssh" to "libssh.so",
         ).forEach { (name, lib_) ->
             val link = File(bin, name)

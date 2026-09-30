@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
         setupProxy()
         setupTerminal()
         setupSettings()
+        setupSshKey()
         findViewById<Button>(R.id.newBrowser).setOnClickListener { select(newBrowserTab(homeUrl())) }
         findViewById<Button>(R.id.newTerminal).setOnClickListener { newTerminalTab() }
         findViewById<Button>(R.id.tabSettings).setOnClickListener { showSettings() }
@@ -260,8 +261,10 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 if (tab !in tabs) return@runOnUiThread
                 // TerminalSession passes args as the full argv, so args[0] is the program name.
-                val args = arrayOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
-                val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
+                val args = mutableListOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath)
+                if (Env.sshKey(this).exists()) args += listOf("-ssh", "-i ${Env.sshKey(this).absolutePath}")
+                args += target
+                val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args.toTypedArray(),
                     env, 2000, sessionClient)
                 tab.session = s
                 if (current === tab) { term.attachSession(s); showKeyboard() }
@@ -370,6 +373,24 @@ class MainActivity : AppCompatActivity() {
             toast("saved")
             val first = tabs.firstOrNull()
             if (first != null) select(first) else select(newBrowserTab(homeUrl()))
+        }
+    }
+
+    private fun setupSshKey() {
+        val pub = findViewById<TextView>(R.id.pubKey)
+        if (Env.sshKey(this).exists()) pub.text = "(key exists; tap Generate / show key to display it)"
+        findViewById<Button>(R.id.genKey).setOnClickListener {
+            Thread {
+                val text = try { Env.ensureSshKey(this) } catch (e: Exception) { "error: ${e.message}" }
+                runOnUiThread { pub.text = text }
+            }.start()
+        }
+        findViewById<Button>(R.id.copyKey).setOnClickListener {
+            val t = pub.text.toString()
+            if (t.startsWith("ssh-")) {
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("msnw ssh key", t))
+                toast("public key copied")
+            }
         }
     }
 

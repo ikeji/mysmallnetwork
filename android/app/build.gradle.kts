@@ -43,6 +43,7 @@ val copyNative by tasks.registering(Copy::class) {
     from(goBin.resolve("linux-arm64/msnw")) { rename { "libmsnw.so" } }
     from(file("$nativeOut/arm64-v8a/mosh-client")) { rename { "libmosh-client.so" } }
     from(file("$nativeOut/arm64-v8a/dbclient")) { rename { "libdbclient.so" } }
+    from(file("$nativeOut/arm64-v8a/dropbearkey")) { rename { "libdropbearkey.so" } }
     from(file("$nativeOut/arm64-v8a/ssh")) { rename { "libssh.so" } }
     into(layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a"))
     doFirst {

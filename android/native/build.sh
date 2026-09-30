@@ -9,7 +9,7 @@
 #   API           Android API level (default 30)
 #   WORK          scratch dir with src/ tarballs (default /tmp/msnw-wt/native)
 #
-# Output: $WORK/out/$ABI/{mosh-client,dbclient} stripped, dynamically linked
+# Output: $WORK/out/$ABI/{mosh-client,dbclient,dropbearkey,ssh} stripped, dynamically linked
 # only against bionic (libc, libm, libdl, libz), C++ runtime static.
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -114,10 +114,11 @@ stage_dropbear() {
 		--disable-utmp --disable-utmpx --disable-wtmp --disable-wtmpx --disable-loginfunc \
 		--disable-pututline --disable-pututxline \
 		CFLAGS="-O2 -include $HERE/getpass_compat.h" LDFLAGS="$PAGE_LDFLAGS" >/dev/null && \
-		make -j"$JOBS" PROGRAMS="dbclient" >/dev/null)
+		make -j"$JOBS" PROGRAMS="dbclient dropbearkey" >/dev/null)
 	install -m 755 "$WORK/build/dropbear-$ABI/dbclient" "$OUT/dbclient"
-	$STRIP "$OUT/dbclient"
-	ls -la "$OUT/dbclient"
+	install -m 755 "$WORK/build/dropbear-$ABI/dropbearkey" "$OUT/dropbearkey"
+	$STRIP "$OUT/dbclient" "$OUT/dropbearkey"
+	ls -la "$OUT/dbclient" "$OUT/dropbearkey"
 }
 
 stage_sshwrap() {

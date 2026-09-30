@@ -49,6 +49,13 @@ into the APK. arm64-v8a only for now.
 
 Settings: link key, mosh target (`user@name`), home page, optional server.
 
+**SSH key**: "Generate / show key" in Settings creates an ed25519 key pair with
+the bundled `dropbearkey` (kept in the app's private `home/.ssh/id_msnw`) and
+shows the public key; add that line to `~/.ssh/authorized_keys` on the
+exporter host. Once the key exists, the mosh bootstrap logs in with it
+(`msnw mosh -ssh "-i ..."`); without it dbclient asks for the password in the
+terminal.
+
 ## Licenses
 
 `terminal-emulator` and `terminal-view` are copied from

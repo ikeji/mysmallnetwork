@@ -46,6 +46,12 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rendezvous server (blank = relay.ikeji.ma:4433)" android:textColor="#cccccc"/>
             <EditText android:id="@+id/prefServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:textColor="#ffffff"/>
             <Button android:id="@+id/save" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Save &amp; restart msnw"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="SSH key for the mosh login (add the public key to ~/.ssh/authorized_keys on the exporter host)" android:textColor="#cccccc"/>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                <Button android:id="@+id/genKey" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Generate / show key"/>
+                <Button android:id="@+id/copyKey" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Copy"/>
+            </LinearLayout>
+            <TextView android:id="@+id/pubKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#7fd1ff" android:typeface="monospace" android:textSize="11sp" android:textIsSelectable="true"/>
             <TextView android:id="@+id/log" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#9c9" android:typeface="monospace" android:textSize="11sp"/>
         </LinearLayout>
     </ScrollView>
