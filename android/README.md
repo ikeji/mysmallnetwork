@@ -33,13 +33,21 @@ into the APK. arm64-v8a only for now.
   (`-o ProxyCommand=...`, `-i`, `-p`) onto dbclient's command line and execs
   dbclient. Unknown host keys are accepted on first use (`-y`) and kept in the
   app's private `home/.ssh/known_hosts`.
-- A foreground service keeps `msnw client --http-proxy 127.0.0.1:8080`
-  running with a partial wake lock; the browser WebView uses it via
-  `ProxyController` (localhost bypassed). Names such as `http://mypc/` go
-  through the tunnel, everything else directly.
-- The terminal tab runs `msnw mosh -v -log ... user@home` in a pty. Extra keys
+- A foreground service owns everything long-lived: the
+  `msnw client --http-proxy 127.0.0.1:8080` process for the browser and the
+  terminal sessions, under a partial wake lock. The activity binds to it and
+  only attaches views, so mosh sessions survive the activity being destroyed
+  (back key, swipe from recents); browser tabs remember their URLs and are
+  reopened. If Android kills the whole process, sessions are lost: mosh has
+  no detach/attach (a new mosh-client cannot resume a server's session), so
+  the notification is what keeps them alive.
+- The browser WebView uses the proxy via `ProxyController` (localhost
+  bypassed). Names such as `http://mypc/` go through the tunnel, everything
+  else directly.
+- Each terminal tab runs `msnw mosh -v -log ... user@home` in a pty. Extra keys
   (Esc, Tab, Ctrl, arrows) sit above the keyboard; Reconnect starts a new
-  session. Password prompts from dbclient appear in the terminal.
+  session in the same tab. Password prompts from dbclient appear in the
+  terminal unless an ssh key is set up.
 
 - msnw is the same static (CGO_ENABLED=0) binary as on other platforms. Its
   pure-Go resolver reads /etc/resolv.conf, which Android lacks, so the app

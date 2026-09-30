@@ -3,11 +3,15 @@ package ma.ikeji.msnw
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.text.InputType
 import android.util.Log
 import android.view.KeyEvent
@@ -39,26 +43,56 @@ import com.termux.view.TerminalViewClient
 import java.util.concurrent.Executors
 
 /**
- * One activity with a strip of tabs. A browser tab owns a WebView (routed
- * through the local HTTP proxy); a terminal tab owns a TerminalSession
- * running "msnw mosh" and is shown in the single TerminalView. Sessions keep
- * running while another tab is in front. Long-press a tab to close it.
+ * One activity with a strip of tabs. Browser tabs own a WebView (routed
+ * through the local HTTP proxy) and their URLs are remembered across
+ * restarts. Terminal tabs show sessions that belong to MsnwService, so they
+ * survive this activity being destroyed; on start the tabs are rebuilt from
+ * the service. Long-press a tab to close it.
  */
 class MainActivity : AppCompatActivity() {
     private sealed class Tab(val button: Button) {
         class Browser(button: Button, val view: View, val web: WebView, val url: EditText) : Tab(button)
-        class Term(button: Button, var session: TerminalSession?) : Tab(button)
+        class Term(button: Button, val entry: MsnwService.Entry) : Tab(button)
     }
 
     private val tabs = mutableListOf<Tab>()
     private var current: Tab? = null
-    private var seq = 0
 
     private lateinit var strip: LinearLayout
     private lateinit var content: FrameLayout
     private lateinit var term: TerminalView
     private var ctrlPending = false
     private var fontSize = 0
+
+    private var svc: MsnwService? = null
+    private var bound = false
+    private val pending = mutableListOf<(MsnwService) -> Unit>()
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val s = (binder as MsnwService.LocalBinder).service
+            svc = s
+            s.listener = sessionClient
+            // Rebuild terminal tabs for sessions the service already has.
+            synchronized(s.entries) { s.entries.toList() }.forEach { e ->
+                if (tabs.none { it is Tab.Term && it.entry === e }) addTermTab(e)
+            }
+            pending.forEach { it(s) }
+            pending.clear()
+        }
+        override fun onServiceDisconnected(name: ComponentName) { svc = null }
+    }
+
+    private fun bind() {
+        if (!bound) {
+            bindService(Intent(this, MsnwService::class.java), connection, Context.BIND_AUTO_CREATE)
+            bound = true
+        }
+    }
+
+    private fun withService(action: (MsnwService) -> Unit) {
+        val s = svc
+        if (s != null) action(s) else { pending += action; bind() }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -90,11 +124,22 @@ class MainActivity : AppCompatActivity() {
             showSettings()
         } else {
             MsnwService.start(this)
-            select(newBrowserTab(homeUrl()))
+            bind()
+            val saved = Env.prefs(this).getString("open_urls", "")?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+            val urls = if (saved.isEmpty()) listOf(homeUrl()) else saved
+            urls.forEach { newBrowserTab(it) }
+            select(tabs.first())
         }
     }
 
     private fun homeUrl() = Env.prefs(this).getString("home", "") ?: ""
+
+    override fun onStop() {
+        // Remember open pages so they can be reopened after a restart.
+        val urls = tabs.filterIsInstance<Tab.Browser>().mapNotNull { it.web.url }.filter { it.isNotBlank() }
+        Env.prefs(this).edit().putString("open_urls", urls.joinToString("\n")).apply()
+        super.onStop()
+    }
 
     // ---- tab strip ----------------------------------------------------------
 
@@ -117,7 +162,7 @@ class MainActivity : AppCompatActivity() {
             if (it is Tab.Browser) it.view.visibility = if (it === tab) View.VISIBLE else View.GONE
         }
         if (tab is Tab.Term) {
-            tab.session?.let { term.attachSession(it) }
+            term.attachSession(tab.entry.session)
             showKeyboard()
         }
     }
@@ -125,7 +170,7 @@ class MainActivity : AppCompatActivity() {
     private fun closeTab(tab: Tab) {
         when (tab) {
             is Tab.Browser -> { content.removeView(tab.view); tab.web.destroy() }
-            is Tab.Term -> tab.session?.finishIfRunning()
+            is Tab.Term -> withService { it.close(tab.entry) }
         }
         strip.removeView(tab.button)
         val idx = tabs.indexOf(tab)
@@ -183,7 +228,7 @@ class MainActivity : AppCompatActivity() {
         content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         lateinit var tab: Tab.Browser
-        val button = makeTabButton("B${++seq}") { tab }
+        val button = makeTabButton("B") { tab }
         tab = Tab.Browser(button, column, web, url)
         tabs.add(tab)
         web.webViewClient = object : WebViewClient() {
@@ -223,7 +268,7 @@ class MainActivity : AppCompatActivity() {
         term.setTextSize(fontSize)
         term.setTerminalViewClient(viewClient)
         term.keepScreenOn = true
-        val send = { s: String -> (current as? Tab.Term)?.session?.write(s) }
+        val send = { s: String -> (current as? Tab.Term)?.entry?.session?.write(s) }
         findViewById<Button>(R.id.kEsc).setOnClickListener { send("\u001b") }
         findViewById<Button>(R.id.kTab).setOnClickListener { send("\t") }
         findViewById<Button>(R.id.kCtrl).setOnClickListener { ctrlPending = !ctrlPending; toast(if (ctrlPending) "Ctrl on" else "Ctrl off") }
@@ -231,49 +276,45 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kDown).setOnClickListener { send("\u001b[B") }
         findViewById<Button>(R.id.kLeft).setOnClickListener { send("\u001b[D") }
         findViewById<Button>(R.id.kRight).setOnClickListener { send("\u001b[C") }
-        findViewById<Button>(R.id.kReconnect).setOnClickListener { (current as? Tab.Term)?.let { startSession(it) } }
+        findViewById<Button>(R.id.kReconnect).setOnClickListener { (current as? Tab.Term)?.let { restartSession(it) } }
         findViewById<Button>(R.id.kClose).setOnClickListener { (current as? Tab.Term)?.let { closeTab(it) } }
     }
 
     private fun newTerminalTab() {
         val p = Env.prefs(this)
-        if (p.getString("target", "").isNullOrBlank() || p.getString("key", "").isNullOrBlank()) {
+        val target = p.getString("target", "") ?: ""
+        if (target.isBlank() || p.getString("key", "").isNullOrBlank()) {
             toast("Set the link key and mosh target in Settings")
             showSettings()
             return
         }
+        withService { s ->
+            Thread {
+                val entry = s.newSession(target) // resolves the server name: off the UI thread
+                runOnUiThread { select(addTermTab(entry)) }
+            }.start()
+        }
+    }
+
+    private fun addTermTab(entry: MsnwService.Entry): Tab.Term {
         lateinit var tab: Tab.Term
-        val button = makeTabButton("T${++seq}") { tab }
-        tab = Tab.Term(button, null)
+        val button = makeTabButton("T${entry.id}" + if (entry.finished) "!" else "") { tab }
+        tab = Tab.Term(button, entry)
         tabs.add(tab)
-        startSession(tab)
-        select(tab)
+        return tab
     }
 
-    private fun startSession(tab: Tab.Term) {
-        tab.session?.finishIfRunning()
-        val target = Env.prefs(this).getString("target", "") ?: ""
-        Env.setup(this)
-        tab.button.text = tab.button.text.toString().trimEnd('!')
-        // Building the environment resolves the server name (network I/O), so do it off the UI thread.
-        Thread {
-            val env = Env.envArray(this)
-            runOnUiThread {
-                if (tab !in tabs) return@runOnUiThread
-                // TerminalSession passes args as the full argv, so args[0] is the program name.
-                val args = mutableListOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath)
-                if (Env.sshKey(this).exists()) args += listOf("-ssh", "-i ${Env.sshKey(this).absolutePath}")
-                args += target
-                val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args.toTypedArray(),
-                    env, 2000, sessionClient)
-                tab.session = s
-                if (current === tab) { term.attachSession(s); showKeyboard() }
-            }
-        }.start()
+    private fun restartSession(tab: Tab.Term) {
+        withService { s ->
+            Thread {
+                s.restart(tab.entry)
+                runOnUiThread {
+                    tab.button.text = "T${tab.entry.id}"
+                    if (current === tab) { term.attachSession(tab.entry.session); showKeyboard() }
+                }
+            }.start()
+        }
     }
-
-    private fun termTabOf(session: TerminalSession): Tab.Term? =
-        tabs.filterIsInstance<Tab.Term>().firstOrNull { it.session === session }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
@@ -285,15 +326,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun termTabOf(session: TerminalSession): Tab.Term? =
+        tabs.filterIsInstance<Tab.Term>().firstOrNull { it.entry.session === session }
+
     private val sessionClient = object : TerminalSessionClient {
         override fun onTextChanged(changedSession: TerminalSession) {
-            if ((current as? Tab.Term)?.session === changedSession) term.onScreenUpdated()
+            if ((current as? Tab.Term)?.entry?.session === changedSession) term.onScreenUpdated()
         }
         override fun onTitleChanged(changedSession: TerminalSession) {}
         override fun onSessionFinished(finishedSession: TerminalSession) {
             runOnUiThread {
                 termTabOf(finishedSession)?.button?.let { it.text = it.text.toString().trimEnd('!') + "!" }
-                if ((current as? Tab.Term)?.session === finishedSession) toast("session ended (exit ${finishedSession.exitStatus}); Reconnect or close the tab")
+                if ((current as? Tab.Term)?.entry?.session === finishedSession) toast("session ended (exit ${finishedSession.exitStatus}); Reconnect or close the tab")
             }
         }
         override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
@@ -369,7 +413,8 @@ class MainActivity : AppCompatActivity() {
                 .putString("home", home.text.toString().trim())
                 .putString("server", server.text.toString().trim())
                 .apply()
-            MsnwService.start(this) // restarts the proxy with the new settings
+            MsnwService.start(this, restartProxy = true)
+            bind()
             toast("saved")
             val first = tabs.firstOrNull()
             if (first != null) select(first) else select(newBrowserTab(homeUrl()))
@@ -399,7 +444,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        tabs.filterIsInstance<Tab.Term>().forEach { it.session?.finishIfRunning() }
+        // Sessions belong to the service and keep running; just stop receiving events.
+        svc?.let { if (it.listener === sessionClient) it.listener = null }
+        if (bound) unbindService(connection)
+        svc = null
         super.onDestroy()
     }
 }
