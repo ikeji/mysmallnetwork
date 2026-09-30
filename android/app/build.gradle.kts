@@ -22,10 +22,21 @@ android {
         versionName = "0.1"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
+    // Release signing from the environment (MSNW_KEYSTORE, MSNW_KEYSTORE_PASSWORD,
+    // MSNW_KEY_ALIAS, MSNW_KEY_PASSWORD); without it, releases use the debug key.
+    val ks = System.getenv("MSNW_KEYSTORE")
+    if (ks != null) {
+        signingConfigs.create("release") {
+            storeFile = file(ks)
+            storePassword = System.getenv("MSNW_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("MSNW_KEY_ALIAS") ?: "msnw"
+            keyPassword = System.getenv("MSNW_KEY_PASSWORD") ?: System.getenv("MSNW_KEYSTORE_PASSWORD")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (ks != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
     packaging {

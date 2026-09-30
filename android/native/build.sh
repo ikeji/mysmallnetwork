@@ -1,7 +1,8 @@
 #!/bin/bash
 # Cross-compile mosh-client and dropbear's dbclient for Android with the NDK.
 #
-#   android/native/build.sh [stage...]     stages: protobuf openssl ncurses mosh dropbear sshwrap pack (default: all)
+#   android/native/build.sh [stage...]     stages: fetch protobuf openssl ncurses mosh dropbear sshwrap pack
+#                                          (default: all but fetch; "fetch" downloads and unpacks the sources)
 #
 # Environment:
 #   ANDROID_NDK   NDK root (default: newest under $ANDROID_SDK_ROOT/ndk or ~/Android/Sdk/ndk)
@@ -46,6 +47,18 @@ MOSH=$SRC/mosh-1.4.0
 DROPBEAR=$SRC/dropbear-2024.86
 
 log() { echo "==> $*"; }
+
+stage_fetch() {
+	log "fetch: source tarballs into $SRC"
+	mkdir -p "$SRC"
+	fetch() { [ -d "$SRC/$2" ] || { curl -sSL -o "$SRC/$2.tar" "$1" && tar xf "$SRC/$2.tar" -C "$SRC" && rm "$SRC/$2.tar"; }; }
+	fetch https://github.com/protocolbuffers/protobuf/releases/download/v21.12/protobuf-cpp-3.21.12.tar.gz protobuf-3.21.12
+	fetch https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz openssl-3.3.2
+	fetch https://ftp.gnu.org/gnu/ncurses/ncurses-6.5.tar.gz ncurses-6.5
+	fetch https://github.com/mobile-shell/mosh/releases/download/mosh-1.4.0/mosh-1.4.0.tar.gz mosh-1.4.0
+	fetch https://matt.ucc.asn.au/dropbear/releases/dropbear-2024.86.tar.bz2 dropbear-2024.86
+	ls -d "$SRC"/*/
+}
 
 stage_protobuf() {
 	if [ ! -x "$HOST/bin/protoc" ]; then

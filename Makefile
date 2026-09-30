@@ -6,7 +6,7 @@ export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone
 
-.PHONY: all test unit natsim roam clean cross android FORCE
+.PHONY: all test unit natsim roam clean cross android android-release FORCE
 
 all: bin/msnw
 
@@ -53,6 +53,12 @@ cross:
 # native programs from android/native/build.sh.
 android: cross
 	cd android && ./gradlew --no-daemon -q assembleDebug && ls -la app/build/outputs/apk/debug/app-debug.apk
+
+# Signed release APK; signing variables come from ~/.config/msnw/signing.env
+# (MSNW_KEYSTORE, MSNW_KEYSTORE_PASSWORD, MSNW_KEY_ALIAS, MSNW_KEY_PASSWORD).
+android-release: cross
+	set -a; [ -f ~/.config/msnw/signing.env ] && . ~/.config/msnw/signing.env; set +a; \
+	cd android && ./gradlew --no-daemon -q assembleRelease && ls -la app/build/outputs/apk/release/app-release.apk
 
 clean:
 	rm -rf bin

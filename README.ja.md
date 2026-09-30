@@ -30,6 +30,8 @@ curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-li
 
 Go が入っていれば `go install github.com/ikeji/mysmallnetwork/cmd/msnw@latest` でもよい。
 
+Android は同じ Releases ページの `msnw-android-arm64.apk` を入れる([android/README.md](android/README.md) 参照)。
+
 ## ビルド
 
 ```

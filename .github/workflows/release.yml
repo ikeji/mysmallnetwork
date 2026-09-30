@@ -32,6 +32,29 @@ jobs:
           done
           (cd dist && sha256sum * > SHA256SUMS)
           ls -l dist
+      # ---- Android APK: msnw + mosh-client/dropbear built with the NDK ----
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK / NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018" "platforms;android-35" "build-tools;35.0.0" >/dev/null
+      - name: Native programs (mosh-client, dbclient, dropbearkey, ssh shim)
+        run: android/native/build.sh fetch protobuf openssl ncurses mosh dropbear sshwrap pack
+      - name: Signed APK
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          MSNW_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MSNW_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MSNW_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_B64" | base64 -d > /tmp/release.keystore
+          export MSNW_KEYSTORE=/tmp/release.keystore
+          (cd android && ./gradlew --no-daemon -q assembleRelease)
+          cp android/app/build/outputs/apk/release/app-release.apk dist/msnw-android-arm64.apk
+          (cd dist && sha256sum msnw-android-arm64.apk >> SHA256SUMS)
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

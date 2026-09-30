@@ -7,6 +7,11 @@ the app bundles the Go binary plus `mosh-client`, dropbear's `dbclient` (as
 the ssh used for the mosh bootstrap) and a terminfo database, and runs them
 in a pty inside a Termux-derived terminal view.
 
+Prebuilt: `msnw-android-arm64.apk` on the
+[Releases](https://github.com/ikeji/mysmallnetwork/releases) page, signed with
+the project's release key (updates install over each other; a locally built
+debug APK has a different signature and must be uninstalled first).
+
 ## Build
 
 ```
