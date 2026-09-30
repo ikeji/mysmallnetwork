@@ -33,14 +33,14 @@ into the APK. arm64-v8a only for now.
   (`-o ProxyCommand=...`, `-i`, `-p`) onto dbclient's command line and execs
   dbclient. Unknown host keys are accepted on first use (`-y`) and kept in the
   app's private `home/.ssh/known_hosts`.
-- A foreground service owns everything long-lived: the
+- A service owns everything long-lived: the
   `msnw client --http-proxy 127.0.0.1:8080` process for the browser and the
-  terminal sessions, under a partial wake lock. The activity binds to it and
-  only attaches views, so mosh sessions survive the activity being destroyed
-  (back key, swipe from recents); browser tabs remember their URLs and are
-  reopened. If Android kills the whole process, sessions are lost: mosh has
-  no detach/attach (a new mosh-client cannot resume a server's session), so
-  the notification is what keeps them alive.
+  terminal sessions. The activity binds to it and only attaches views, so
+  mosh sessions survive the activity being destroyed (back key, swipe from
+  recents). The service is in the foreground (notification, wake lock) only
+  while a mosh session is alive; that keeps the process from being killed in
+  the background. mosh has no detach/attach (a new mosh-client cannot resume
+  a server's session), so if the process does die the sessions are gone.
 - The browser WebView uses the proxy via `ProxyController` (localhost
   bypassed). Names such as `http://mypc/` go through the tunnel, everything
   else directly.

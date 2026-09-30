@@ -16,11 +16,16 @@ import com.termux.terminal.TerminalSessionClient
 import java.io.File
 
 /**
- * Foreground service that owns everything long-lived: the msnw HTTP proxy
- * process for the browser, and the terminal sessions running "msnw mosh".
- * The activity binds to it and only attaches views, so sessions survive the
- * activity being destroyed (back key, swipe from recents, memory pressure).
- * A partial wake lock keeps the tunnels alive while the screen is off.
+ * Service that owns everything long-lived: the msnw HTTP proxy process for
+ * the browser, and the terminal sessions running "msnw mosh". The activity
+ * binds to it and only attaches views, so sessions survive the activity being
+ * destroyed (back key, swipe from recents, memory pressure).
+ *
+ * It runs in the foreground (persistent notification, partial wake lock) only
+ * while at least one mosh session is alive; that is what keeps the process,
+ * and with it the sessions, from being killed in the background. With no
+ * sessions it is an ordinary started service: the proxy keeps running while
+ * the app is in use and is restarted when the app is opened again.
  */
 class MsnwService : Service() {
     /** One terminal session and what the activity needs to show it. */
@@ -35,6 +40,7 @@ class MsnwService : Service() {
     private var thread: Thread? = null
     @Volatile private var stopping = false
     private var wakeLock: PowerManager.WakeLock? = null
+    private var foreground = false
 
     val entries = mutableListOf<Entry>()
     private var nextId = 1
@@ -48,12 +54,8 @@ class MsnwService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startForeground(1, notification())
-        if (wakeLock == null) {
-            wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "msnw:proxy").also { it.acquire() }
-        }
         if (intent?.action == ACTION_RESTART_PROXY || proc == null) restartProxy()
+        updateForeground()
         return START_STICKY
     }
 
@@ -70,7 +72,7 @@ class MsnwService : Service() {
         val id = nextId++
         val entry = Entry(id, target, spawn(target, env))
         synchronized(entries) { entries += entry }
-        updateNotification()
+        updateForeground()
         return entry
     }
 
@@ -79,12 +81,13 @@ class MsnwService : Service() {
         entry.session.finishIfRunning()
         entry.session = spawn(entry.target, env)
         entry.finished = false
+        updateForeground()
     }
 
     fun close(entry: Entry) {
         entry.session.finishIfRunning()
         synchronized(entries) { entries -= entry }
-        updateNotification()
+        updateForeground()
     }
 
     private fun spawn(target: String, env: Array<String>): TerminalSession {
@@ -104,7 +107,7 @@ class MsnwService : Service() {
         override fun onTitleChanged(s: TerminalSession) { listener?.onTitleChanged(s) }
         override fun onSessionFinished(s: TerminalSession) {
             entryOf(s)?.finished = true
-            updateNotification()
+            updateForeground()
             listener?.onSessionFinished(s)
         }
         override fun onCopyTextToClipboard(s: TerminalSession, text: String) { listener?.onCopyTextToClipboard(s, text) }
@@ -172,8 +175,22 @@ class MsnwService : Service() {
 
     // ---- notification -------------------------------------------------------
 
-    private fun updateNotification() {
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).notify(1, notification())
+    /** Foreground (notification + wake lock) exactly while a mosh session is alive. */
+    private fun updateForeground() {
+        val live = synchronized(entries) { entries.count { !it.finished } }
+        if (live > 0) {
+            startForeground(1, notification())
+            foreground = true
+            if (wakeLock == null) {
+                wakeLock = (getSystemService(Context.POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "msnw:sessions").also { it.acquire() }
+            }
+        } else if (foreground) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foreground = false
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        }
     }
 
     private fun notification(): Notification {
@@ -188,7 +205,7 @@ class MsnwService : Service() {
         }
         val open = PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_IMMUTABLE)
         val n = synchronized(entries) { entries.count { !it.finished } }
-        val text = if (n == 0) "proxy running" else "proxy running, $n mosh session${if (n == 1) "" else "s"}"
+        val text = "$n mosh session${if (n == 1) "" else "s"} running"
         return Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("msnw")
@@ -208,7 +225,7 @@ class MsnwService : Service() {
         fun start(ctx: Context, restartProxy: Boolean = false) {
             val i = Intent(ctx, MsnwService::class.java)
             if (restartProxy) i.action = ACTION_RESTART_PROXY
-            ctx.startForegroundService(i)
+            ctx.startService(i) // becomes a foreground service only once a mosh session exists
         }
         fun logTail(ctx: Context, lines: Int = 40): String {
             val f = File(ctx.filesDir, "msnw.log")
