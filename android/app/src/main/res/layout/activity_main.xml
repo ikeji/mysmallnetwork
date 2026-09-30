@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#000000">
+
+    <LinearLayout android:id="@+id/tabs" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:background="#222222">
+        <Button android:id="@+id/tabBrowser" style="?android:attr/borderlessButtonStyle" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Browser" android:textColor="#ffffff"/>
+        <Button android:id="@+id/tabTerminal" style="?android:attr/borderlessButtonStyle" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Terminal" android:textColor="#ffffff"/>
+        <Button android:id="@+id/tabSettings" style="?android:attr/borderlessButtonStyle" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Settings" android:textColor="#ffffff"/>
+    </LinearLayout>
+
+    <!-- Browser -->
+    <LinearLayout android:id="@+id/browser" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:background="#333333">
+            <EditText android:id="@+id/url" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:inputType="textUri" android:imeOptions="actionGo" android:singleLine="true" android:hint="http://mypc/" android:textColor="#ffffff" android:textColorHint="#888888"/>
+            <Button android:id="@+id/go" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Go"/>
+        </LinearLayout>
+        <WebView android:id="@+id/web" android:layout_width="match_parent" android:layout_height="match_parent"/>
+    </LinearLayout>
+
+    <!-- Terminal -->
+    <LinearLayout android:id="@+id/terminal" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:visibility="gone">
+        <com.termux.view.TerminalView android:id="@+id/term" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"/>
+        <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:background="#222222">
+            <LinearLayout android:id="@+id/keys" android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
+                <Button android:id="@+id/kEsc" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Esc"/>
+                <Button android:id="@+id/kTab" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Tab"/>
+                <Button android:id="@+id/kCtrl" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Ctrl"/>
+                <Button android:id="@+id/kUp" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="↑"/>
+                <Button android:id="@+id/kDown" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="↓"/>
+                <Button android:id="@+id/kLeft" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="←"/>
+                <Button android:id="@+id/kRight" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="→"/>
+                <Button android:id="@+id/kReconnect" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Reconnect"/>
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <!-- Settings -->
+    <ScrollView android:id="@+id/settings" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="16dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Link key (shared with the exporter)" android:textColor="#cccccc"/>
+            <EditText android:id="@+id/prefKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textPassword" android:textColor="#ffffff"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="mosh target (user@name)" android:textColor="#cccccc"/>
+            <EditText android:id="@+id/prefTarget" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textNoSuggestions" android:hint="user@home" android:textColor="#ffffff" android:textColorHint="#888888"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Home page" android:textColor="#cccccc"/>
+            <EditText android:id="@+id/prefHome" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:hint="http://mypc/" android:textColor="#ffffff" android:textColorHint="#888888"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rendezvous server (blank = relay.ikeji.ma:4433)" android:textColor="#cccccc"/>
+            <EditText android:id="@+id/prefServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:textColor="#ffffff"/>
+            <Button android:id="@+id/save" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Save &amp; restart msnw"/>
+            <TextView android:id="@+id/log" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#9c9" android:typeface="monospace" android:textSize="11sp"/>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

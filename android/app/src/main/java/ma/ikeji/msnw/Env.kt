@@ -1,0 +1,73 @@
+package ma.ikeji.msnw
+
+import android.content.Context
+import android.system.Os
+import java.io.File
+
+/**
+ * Lays out the app's private "prefix": a bin directory of symlinks to the
+ * bundled executables (which Android extracted into nativeLibraryDir), the
+ * terminfo database, a home directory, and the environment the processes run
+ * with. Symlinks are used because only files under nativeLibraryDir may be
+ * executed, while "msnw mosh" looks up "ssh" and "mosh-client" by name on PATH.
+ */
+object Env {
+    private const val PREFS = "msnw"
+
+    fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun bin(ctx: Context): File = File(ctx.filesDir, "bin")
+    fun home(ctx: Context): File = File(ctx.filesDir, "home")
+    fun terminfo(ctx: Context): File = File(ctx.filesDir, "terminfo")
+    fun msnw(ctx: Context): File = File(bin(ctx), "msnw")
+    fun logFile(ctx: Context): File = File(ctx.filesDir, "msnw.log")
+
+    /** Creates directories and symlinks; safe to call on every start. */
+    fun setup(ctx: Context) {
+        val lib = File(ctx.applicationInfo.nativeLibraryDir)
+        val bin = bin(ctx)
+        bin.mkdirs(); home(ctx).mkdirs(); File(home(ctx), ".ssh").mkdirs()
+        mapOf(
+            "msnw" to "libmsnw.so",
+            "mosh-client" to "libmosh-client.so",
+            "dbclient" to "libdbclient.so",
+            "ssh" to "libssh.so",
+        ).forEach { (name, lib_) ->
+            val link = File(bin, name)
+            link.delete()
+            Os.symlink(File(lib, lib_).absolutePath, link.absolutePath)
+        }
+        copyAssets(ctx, "terminfo", terminfo(ctx))
+    }
+
+    private fun copyAssets(ctx: Context, path: String, dst: File) {
+        val entries = ctx.assets.list(path) ?: return
+        if (entries.isEmpty()) { // a file
+            dst.parentFile?.mkdirs()
+            ctx.assets.open(path).use { i -> dst.outputStream().use { o -> i.copyTo(o) } }
+            return
+        }
+        dst.mkdirs()
+        entries.forEach { copyAssets(ctx, "$path/$it", File(dst, it)) }
+    }
+
+    /** Environment for msnw and the programs it spawns. */
+    fun environment(ctx: Context): Map<String, String> {
+        val p = prefs(ctx)
+        val env = linkedMapOf(
+            "PATH" to bin(ctx).absolutePath + ":" + (System.getenv("PATH") ?: "/system/bin"),
+            "HOME" to home(ctx).absolutePath,
+            "TMPDIR" to ctx.cacheDir.absolutePath,
+            "TERM" to "xterm-256color",
+            "TERMINFO" to terminfo(ctx).absolutePath,
+            "LANG" to "en_US.UTF-8",
+            "MSNW_KEY" to (p.getString("key", "") ?: ""),
+            "MSNW_DBCLIENT" to File(bin(ctx), "dbclient").absolutePath,
+            "MSNW_LOG" to logFile(ctx).absolutePath,
+        )
+        p.getString("server", "")?.takeIf { it.isNotBlank() }?.let { env["MSNW_SERVER"] = it }
+        return env
+    }
+
+    fun envArray(ctx: Context): Array<String> = environment(ctx).map { "${it.key}=${it.value}" }.toTypedArray()
+}

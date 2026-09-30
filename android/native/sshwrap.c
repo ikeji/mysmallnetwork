@@ -66,7 +66,9 @@ int main(int argc, char **argv) {
 		break; /* destination */
 	}
 	if (accept_new) out[n++] = "-y";
-	for (; i < argc; i++) out[n++] = argv[i]; /* [user@]host and the remote command */
+	if (i < argc) out[n++] = argv[i++];                 /* [user@]host */
+	if (i < argc && strcmp(argv[i], "--") == 0) i++;    /* dbclient has no "--"; the rest is the command */
+	for (; i < argc; i++) out[n++] = argv[i];
 	out[n] = NULL;
 	execv(dbclient, out);
 	perror(dbclient);

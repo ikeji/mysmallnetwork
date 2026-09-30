@@ -410,6 +410,13 @@ Findings:
   endpoint-independent). With both sides punching at once this cannot be
   avoided, so those fall back to the relay.
 
+## Android app
+
+`android/` holds an app with a browser tab (through the HTTP proxy) and a
+terminal tab running real mosh to a published host; msnw is bundled unchanged
+together with `mosh-client` and dropbear built with the NDK. See
+[android/README.md](android/README.md).
+
 ## Notes
 
 - The server certificate is not verified by default. Landing on a fake server

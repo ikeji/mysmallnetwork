@@ -1,2 +1,9 @@
 /bin/
 *.key
+android/.gradle/
+android/build/
+android/*/build/
+android/app/src/main/jniLibs/
+android/app/src/main/assets/terminfo/
+android/local.properties
+android/.kotlin/

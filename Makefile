@@ -6,7 +6,7 @@ export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone
 
-.PHONY: all test unit natsim roam clean cross FORCE
+.PHONY: all test unit natsim roam clean cross android FORCE
 
 all: bin/msnw
 
@@ -48,6 +48,11 @@ cross:
 	for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do \
 		GOOS=$${t%/*} GOARCH=$${t#*/} go build $(GOFLAGS) -o bin/$${t%/*}-$${t#*/}/ ./cmd/... || exit 1; \
 	done
+
+# Android app (see android/README.md): needs bin/linux-arm64/msnw and the
+# native programs from android/native/build.sh.
+android: cross
+	cd android && ./gradlew --no-daemon -q assembleDebug && ls -la app/build/outputs/apk/debug/app-debug.apk
 
 clean:
 	rm -rf bin

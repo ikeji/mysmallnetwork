@@ -369,6 +369,12 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
   (mapping が endpoint-independent でなくなる)。両側が同時にパンチする以上これは
   避けられず、リレーに落ちる。
 
+## Android アプリ
+
+`android/` に、ブラウザタブ(HTTP プロキシ経由)と、公開したホストへ本物の mosh で繋ぐ
+端末タブを持つアプリがある。msnw は無改造のまま、NDK でビルドした `mosh-client` と
+dropbear を同梱している。[android/README.md](android/README.md) を参照。
+
 ## 注意
 
 - 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
