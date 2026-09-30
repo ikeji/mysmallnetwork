@@ -37,8 +37,7 @@
         <LinearLayout android:id="@+id/termInputRow" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:background="#222222" android:visibility="gone">
             <EditText android:id="@+id/termInput" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                 android:inputType="text|textMultiLine|textNoSuggestions" android:imeOptions="actionSend|flagNoEnterAction" android:maxLines="3"
-                android:hint="text to send (Enter = send + newline)" android:textColor="#ffffff" android:textColorHint="#888888" android:textSize="14sp"/>
-            <Button android:id="@+id/termSend" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Send"/>
+                android:hint="type here, Enter sends it as a line" android:textColor="#ffffff" android:textColorHint="#888888" android:textSize="14sp"/>
         </LinearLayout>
     </LinearLayout>
 

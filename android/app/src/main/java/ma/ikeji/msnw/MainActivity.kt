@@ -297,7 +297,7 @@ class MainActivity : AppCompatActivity() {
         term.setTextSize(fontSize)
         term.setTerminalViewClient(viewClient)
         term.keepScreenOn = true
-        val send = { s: String -> (current as? Tab.Term)?.entry?.session?.write(s) }
+        val send = { s: String -> if (s.isNotEmpty()) (current as? Tab.Term)?.entry?.session?.write(s) }
         findViewById<Button>(R.id.kEsc).setOnClickListener { send("\u001b") }
         findViewById<Button>(R.id.kTab).setOnClickListener { send("\t") }
         findViewById<Button>(R.id.kCtrl).setOnClickListener { ctrlPending = !ctrlPending; toast(if (ctrlPending) "Ctrl on" else "Ctrl off") }
@@ -309,12 +309,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kPgDn).setOnClickListener { send("\u001b[6~") }
         // Text input row for IMEs that cannot type into the terminal view directly (Japanese etc.).
         val input = findViewById<EditText>(R.id.termInput)
-        val sendInput = { newline: Boolean ->
-            val text = input.text.toString()
-            send(if (newline) text + "\r" else text)
+        val sendInput = { _: Boolean ->
+            send(input.text.toString() + "\r") // a line, like typing it and pressing Enter
             input.setText("")
         }
-        findViewById<Button>(R.id.termSend).setOnClickListener { sendInput(false) }
         val inputRow = findViewById<View>(R.id.termInputRow)
         findViewById<Button>(R.id.kText).setOnClickListener {
             val show = inputRow.visibility != View.VISIBLE
