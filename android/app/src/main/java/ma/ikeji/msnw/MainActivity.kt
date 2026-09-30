@@ -5,12 +5,15 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.WebChromeClient
@@ -18,6 +21,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -32,11 +37,25 @@ import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
 import java.util.concurrent.Executors
 
+/**
+ * One activity with a strip of tabs. A browser tab owns a WebView (routed
+ * through the local HTTP proxy); a terminal tab owns a TerminalSession
+ * running "msnw mosh" and is shown in the single TerminalView. Sessions keep
+ * running while another tab is in front. Long-press a tab to close it.
+ */
 class MainActivity : AppCompatActivity() {
-    private lateinit var web: WebView
-    private lateinit var url: EditText
+    private sealed class Tab(val button: Button) {
+        class Browser(button: Button, val view: View, val web: WebView, val url: EditText) : Tab(button)
+        class Term(button: Button, var session: TerminalSession?) : Tab(button)
+    }
+
+    private val tabs = mutableListOf<Tab>()
+    private var current: Tab? = null
+    private var seq = 0
+
+    private lateinit var strip: LinearLayout
+    private lateinit var content: FrameLayout
     private lateinit var term: TerminalView
-    private var session: TerminalSession? = null
     private var ctrlPending = false
     private var fontSize = 0
 
@@ -57,42 +76,74 @@ class MainActivity : AppCompatActivity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
-        setupBrowser()
+        strip = findViewById(R.id.tabs)
+        content = findViewById(R.id.content)
+        setupProxy()
         setupTerminal()
         setupSettings()
-        findViewById<Button>(R.id.tabBrowser).setOnClickListener { show(R.id.browser) }
-        findViewById<Button>(R.id.tabTerminal).setOnClickListener { show(R.id.terminal); ensureSession() }
-        findViewById<Button>(R.id.tabSettings).setOnClickListener { show(R.id.settings); refreshLog() }
-        val configured = !Env.prefs(this).getString("key", "").isNullOrBlank()
-        if (configured) {
-            MsnwService.start(this)
-            show(R.id.browser)
-            loadHome()
+        findViewById<Button>(R.id.newBrowser).setOnClickListener { select(newBrowserTab(homeUrl())) }
+        findViewById<Button>(R.id.newTerminal).setOnClickListener { newTerminalTab() }
+        findViewById<Button>(R.id.tabSettings).setOnClickListener { showSettings() }
+        if (Env.prefs(this).getString("key", "").isNullOrBlank()) {
+            showSettings()
         } else {
-            show(R.id.settings)
+            MsnwService.start(this)
+            select(newBrowserTab(homeUrl()))
         }
     }
 
-    private fun show(id: Int) {
-        listOf(R.id.browser, R.id.terminal, R.id.settings).forEach {
-            findViewById<View>(it).visibility = if (it == id) View.VISIBLE else View.GONE
-        }
-        if (id == R.id.terminal) term.requestFocus()
+    private fun homeUrl() = Env.prefs(this).getString("home", "") ?: ""
+
+    // ---- tab strip ----------------------------------------------------------
+
+    private fun makeTabButton(label: String, tabRef: () -> Tab): Button {
+        val b = Button(this, null, android.R.attr.borderlessButtonStyle)
+        b.text = label
+        b.setTextColor(Color.WHITE)
+        b.setOnClickListener { select(tabRef()) }
+        b.setOnLongClickListener { closeTab(tabRef()); true }
+        strip.addView(b)
+        return b
     }
 
-    // ---- browser ------------------------------------------------------------
-
-    private fun setupBrowser() {
-        web = findViewById(R.id.web)
-        url = findViewById(R.id.url)
-        web.settings.javaScriptEnabled = true
-        web.settings.domStorageEnabled = true
-        web.settings.useWideViewPort = true
-        web.settings.loadWithOverviewMode = true
-        web.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
+    private fun select(tab: Tab) {
+        current = tab
+        findViewById<View>(R.id.settings).visibility = View.GONE
+        findViewById<View>(R.id.terminal).visibility = if (tab is Tab.Term) View.VISIBLE else View.GONE
+        tabs.forEach {
+            it.button.setTextColor(if (it === tab) Color.parseColor("#7fd1ff") else Color.WHITE)
+            if (it is Tab.Browser) it.view.visibility = if (it === tab) View.VISIBLE else View.GONE
         }
-        web.webChromeClient = WebChromeClient()
+        if (tab is Tab.Term) {
+            tab.session?.let { term.attachSession(it) }
+            term.requestFocus()
+        }
+    }
+
+    private fun closeTab(tab: Tab) {
+        when (tab) {
+            is Tab.Browser -> { content.removeView(tab.view); tab.web.destroy() }
+            is Tab.Term -> tab.session?.finishIfRunning()
+        }
+        strip.removeView(tab.button)
+        val idx = tabs.indexOf(tab)
+        tabs.remove(tab)
+        if (current === tab) {
+            if (tabs.isEmpty()) showSettings() else select(tabs[minOf(idx, tabs.size - 1)])
+        }
+    }
+
+    private fun showSettings() {
+        current = null
+        findViewById<View>(R.id.terminal).visibility = View.GONE
+        tabs.forEach { it.button.setTextColor(Color.WHITE); if (it is Tab.Browser) it.view.visibility = View.GONE }
+        findViewById<View>(R.id.settings).visibility = View.VISIBLE
+        refreshLog()
+    }
+
+    // ---- browser tabs -------------------------------------------------------
+
+    private fun setupProxy() {
         if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
             val config = ProxyConfig.Builder()
                 .addProxyRule("http://127.0.0.1:${MsnwService.PROXY_PORT}")
@@ -103,33 +154,66 @@ class MainActivity : AppCompatActivity() {
                 Log.i(MsnwService.TAG, "webview proxy set")
             }
         } else {
-            Toast.makeText(this, "This WebView cannot use a proxy; update Android System WebView", Toast.LENGTH_LONG).show()
+            toast("This WebView cannot use a proxy; update Android System WebView")
         }
-        val go = { navigate(url.text.toString()) }
-        findViewById<Button>(R.id.go).setOnClickListener { go() }
-        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { go(); true } else false }
     }
 
-    private fun navigate(raw: String) {
-        var u = raw.trim()
-        if (u.isEmpty()) return
-        if (!u.contains("://")) u = "http://$u"
-        web.loadUrl(u)
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
-    }
+    private fun newBrowserTab(initialUrl: String): Tab.Browser {
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Color.parseColor("#333333")) }
+        val url = EditText(this).apply {
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO
+            isSingleLine = true
+            hint = "http://mypc/"
+            setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
+        }
+        val go = Button(this).apply { text = "Go" }
+        bar.addView(url, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(go)
+        val web = WebView(this)
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.useWideViewPort = true
+        web.settings.loadWithOverviewMode = true
+        column.addView(bar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        column.addView(web, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
-    private fun loadHome() {
-        val home = Env.prefs(this).getString("home", "") ?: ""
-        if (home.isNotBlank()) navigate(home)
+        lateinit var tab: Tab.Browser
+        val button = makeTabButton("B${++seq}") { tab }
+        tab = Tab.Browser(button, column, web, url)
+        tabs.add(tab)
+        web.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
+        }
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                if (!title.isNullOrBlank()) button.text = title.take(12)
+            }
+        }
+        val navigate = {
+            var u = url.text.toString().trim()
+            if (u.isNotEmpty()) {
+                if (!u.contains("://")) u = "http://$u"
+                web.loadUrl(u)
+                (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
+            }
+        }
+        go.setOnClickListener { navigate() }
+        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(); true } else false }
+        if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate() }
+        return tab
     }
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (findViewById<View>(R.id.browser).visibility == View.VISIBLE && web.canGoBack()) web.goBack()
+        val c = current
+        if (c is Tab.Browser && c.web.canGoBack()) c.web.goBack()
         else @Suppress("DEPRECATION") super.onBackPressed()
     }
 
-    // ---- terminal -----------------------------------------------------------
+    // ---- terminal tabs ------------------------------------------------------
 
     private fun setupTerminal() {
         term = findViewById(R.id.term)
@@ -137,7 +221,7 @@ class MainActivity : AppCompatActivity() {
         term.setTextSize(fontSize)
         term.setTerminalViewClient(viewClient)
         term.keepScreenOn = true
-        val send = { s: String -> session?.write(s) }
+        val send = { s: String -> (current as? Tab.Term)?.session?.write(s) }
         findViewById<Button>(R.id.kEsc).setOnClickListener { send("\u001b") }
         findViewById<Button>(R.id.kTab).setOnClickListener { send("\t") }
         findViewById<Button>(R.id.kCtrl).setOnClickListener { ctrlPending = !ctrlPending; toast(if (ctrlPending) "Ctrl on" else "Ctrl off") }
@@ -145,40 +229,54 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.kDown).setOnClickListener { send("\u001b[B") }
         findViewById<Button>(R.id.kLeft).setOnClickListener { send("\u001b[D") }
         findViewById<Button>(R.id.kRight).setOnClickListener { send("\u001b[C") }
-        findViewById<Button>(R.id.kReconnect).setOnClickListener { startSession() }
+        findViewById<Button>(R.id.kReconnect).setOnClickListener { (current as? Tab.Term)?.let { startSession(it) } }
+        findViewById<Button>(R.id.kClose).setOnClickListener { (current as? Tab.Term)?.let { closeTab(it) } }
     }
 
-    private fun ensureSession() {
-        if (session?.isRunning != true) startSession()
-    }
-
-    private fun startSession() {
-        session?.finishIfRunning()
+    private fun newTerminalTab() {
         val p = Env.prefs(this)
-        val target = p.getString("target", "") ?: ""
-        if (target.isBlank() || p.getString("key", "").isNullOrBlank()) {
+        if (p.getString("target", "").isNullOrBlank() || p.getString("key", "").isNullOrBlank()) {
             toast("Set the link key and mosh target in Settings")
-            show(R.id.settings)
+            showSettings()
             return
         }
+        lateinit var tab: Tab.Term
+        val button = makeTabButton("T${++seq}") { tab }
+        tab = Tab.Term(button, null)
+        tabs.add(tab)
+        startSession(tab)
+        select(tab)
+    }
+
+    private fun startSession(tab: Tab.Term) {
+        tab.session?.finishIfRunning()
+        val target = Env.prefs(this).getString("target", "") ?: ""
         Env.setup(this)
         // TerminalSession passes args as the full argv, so args[0] is the program name.
         val args = arrayOf("msnw", "mosh", "-v", "-log", Env.logFile(this).absolutePath, target)
         val s = TerminalSession(Env.msnw(this).absolutePath, Env.home(this).absolutePath, args,
             Env.envArray(this), 2000, sessionClient)
-        session = s
-        term.attachSession(s)
+        tab.session = s
+        if (current === tab) term.attachSession(s)
         term.requestFocus()
         (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(term, 0)
     }
 
+    private fun termTabOf(session: TerminalSession): Tab.Term? =
+        tabs.filterIsInstance<Tab.Term>().firstOrNull { it.session === session }
+
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 
     private val sessionClient = object : TerminalSessionClient {
-        override fun onTextChanged(changedSession: TerminalSession) { term.onScreenUpdated() }
+        override fun onTextChanged(changedSession: TerminalSession) {
+            if ((current as? Tab.Term)?.session === changedSession) term.onScreenUpdated()
+        }
         override fun onTitleChanged(changedSession: TerminalSession) {}
         override fun onSessionFinished(finishedSession: TerminalSession) {
-            runOnUiThread { toast("session ended (exit ${finishedSession.exitStatus}); tap Reconnect") }
+            runOnUiThread {
+                termTabOf(finishedSession)?.button?.let { it.text = it.text.toString().trimEnd('!') + "!" }
+                if ((current as? Tab.Term)?.session === finishedSession) toast("session ended (exit ${finishedSession.exitStatus}); Reconnect or close the tab")
+            }
         }
         override fun onCopyTextToClipboard(session: TerminalSession, text: String) {
             (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("msnw", text))
@@ -257,8 +355,8 @@ class MainActivity : AppCompatActivity() {
                 .apply()
             MsnwService.start(this) // restarts the proxy with the new settings
             toast("saved")
-            show(R.id.browser)
-            loadHome()
+            val first = tabs.firstOrNull()
+            if (first != null) select(first) else select(newBrowserTab(homeUrl()))
         }
     }
 
@@ -267,7 +365,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        session?.finishIfRunning()
+        tabs.filterIsInstance<Tab.Term>().forEach { it.session?.finishIfRunning() }
         super.onDestroy()
     }
 }
