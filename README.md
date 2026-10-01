@@ -167,6 +167,22 @@ msnw export -n exit --all                          # forward to any host:port (e
 a range `lo-hi` / `host:lo-hi`. `--all` allows any destination on both
 protocols; combined with `-t`, the first `-t` is the default target.
 
+### wrap-export
+
+Run a command and publish the port it listens on, for as long as it runs:
+
+```
+msnw wrap-export -key K -n foo -- python -m http.server        # then http://foo/ from a client
+msnw wrap-export -key K -n foo -- python -m http.server {port} # msnw picks a free port and fills it in
+msnw wrap-export -key K -n foo -p 3000 -- npm start            # the port is known
+```
+
+The port is taken from `-p`, or from a `{port}` placeholder in the command
+(`-p 0` or no `-p` picks a free port); either way it is also exported to the
+command as `$PORT`. With neither, msnw watches the command and its children
+for a listening TCP socket (Linux, via /proc) and publishes that. The export
+ends when the command exits, and Ctrl-C stops both.
+
 ### client
 
 ```

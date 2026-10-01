@@ -155,6 +155,21 @@ msnw export -n exit --all                          # 任意の host:port へ中�
 `lo-hi` / `host:lo-hi` のポート範囲。
 `--all` は両プロトコルで任意の宛先を許し、`-t` と併用するとその先頭が既定ターゲットになる。
 
+### wrap-export
+
+コマンドを起動し、それが待ち受けるポートを、コマンドが動いている間だけ公開する:
+
+```
+msnw wrap-export -key K -n foo -- python -m http.server        # client から http://foo/
+msnw wrap-export -key K -n foo -- python -m http.server {port} # msnw が空きポートを選んで埋める
+msnw wrap-export -key K -n foo -p 3000 -- npm start            # ポートが分かっている場合
+```
+
+ポートは `-p` か、コマンド中の `{port}` から決まる(`-p 0` か `-p` 無しなら空きポート)。
+どちらの場合も環境変数 `PORT` でコマンドに渡す。どちらも無ければ、コマンド(と子プロセス)が
+TCP で待ち受けを始めるのを `/proc` で検出して公開する(Linux)。コマンドが終われば公開も終わり、
+Ctrl-C で両方止まる。
+
 ### client
 
 ```

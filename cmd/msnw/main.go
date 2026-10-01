@@ -2,6 +2,7 @@
 //
 //	msnw server   [-server-key S] [-listen :4433] [-relay :4434] [-key file]
 //	msnw export   -key K -n NAME -t [host:]port [-t ...] [--all]
+//	msnw wrap-export -key K -n NAME [-p PORT] -- COMMAND [ARGS...]
 //	msnw client   -key K -n NAME[:port] [-l [addr]] | --socks5 [addr]
 //	msnw mosh     -key K [-p PORT] [user@]NAME
 //	msnw gen-key
@@ -22,6 +23,7 @@ const usage = `usage: msnw <command> [options]
 commands:
   server    run the rendezvous + relay server
   export    publish local services under a name
+  wrap-export  run a command and publish the port it listens on
   client    reach a published service (stdio, -l local port, --socks5)
   mosh      run mosh to a published host (ssh + UDP through the tunnel)
   gen-key   print a fresh random link key
@@ -41,6 +43,8 @@ func main() {
 		cli.Server(args)
 	case "export", "exporter":
 		cli.Export(args)
+	case "wrap-export", "wrap":
+		cli.WrapExport(args)
 	case "client":
 		cli.Client(args)
 	case "mosh":

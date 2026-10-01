@@ -161,33 +161,48 @@ func Export(args []string) {
 		}
 		pol.udp = append(pol.udp, ht)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := serveExport(ctx, &exportOpts{server: *server, linkKey: *linkKey, serverKey: *serverKey,
+		serverFP: *serverFP, udpPort: *port, verbose: *verbose}, *name, pol); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// exportOpts are the connection options of an exporter.
+type exportOpts struct {
+	server, linkKey, serverKey, serverFP string
+	udpPort                              int
+	verbose                              bool
+}
+
+// serveExport publishes pol under name until ctx ends, re-registering with
+// the server whenever the control connection drops. Shared by "export" and
+// "wrap-export".
+func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) error {
 	defaultPort := 0
 	if len(pol.tcp) > 0 {
 		defaultPort = pol.tcp[0].lo
 	}
-
 	id, err := ident.New()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	node, err := peer.New(id, *server, *serverKey, *serverFP, *port)
+	node, err := peer.New(id, o.server, o.serverKey, o.serverFP, o.udpPort)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	node.Verbose = *verbose
+	node.Verbose = o.verbose
 	defer node.Close()
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	allow := ident.NewAllowList(5 * time.Minute)
 	ln, err := node.Listen(allow.Allowed)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	sessions := resume.NewRegistry()
 	go sessions.Run(ctx)
-	go acceptLoop(ctx, ln, pol, *linkKey, defaultPort, sessions)
+	go acceptLoop(ctx, ln, pol, o.linkKey, defaultPort, sessions)
 
 	onIncoming := func(m *proto.Message) {
 		log.Printf("incoming client %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
@@ -202,13 +217,13 @@ func Export(args []string) {
 				}
 				return
 			}
-			servePeer(ctx, conn, pol, *linkKey, defaultPort, sessions)
+			servePeer(ctx, conn, pol, o.linkKey, defaultPort, sessions)
 		}()
 	}
 
 	backoff := time.Second
 	for ctx.Err() == nil {
-		err := node.Register(ctx, *linkKey, *name, onIncoming)
+		err := node.Register(ctx, o.linkKey, name, onIncoming)
 		if ctx.Err() != nil {
 			break
 		}
@@ -221,6 +236,7 @@ func Export(args []string) {
 			backoff *= 2
 		}
 	}
+	return nil
 }
 
 func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey string, defaultPort int, sessions *resume.Registry) {
