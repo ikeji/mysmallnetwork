@@ -61,8 +61,9 @@ into the APK. arm64-v8a only for now.
   cgo build with GOOS=android would remove this step if it is ever needed.)
 
 The app opens on the "+" screen (also reached from the tab strip): type a URL
-or a mosh target (`user@name`) to open a tab, or pick one from the history
-lists below the inputs (long-press an entry to forget it). Settings on the
+or a mosh target (`user@name`) to open a tab, or pick one from the lists
+below the inputs (× removes an entry). The URL list holds what you typed and
+pages bookmarked with ☆ in a browser tab, not every page visited. Settings on the
 same screen: link key, optional server, ssh key, and the msnw log tail.
 
 **SSH key**: "Generate / show key" in Settings creates an ed25519 key pair with

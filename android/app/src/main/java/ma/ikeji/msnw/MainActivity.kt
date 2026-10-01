@@ -132,7 +132,12 @@ class MainActivity : AppCompatActivity() {
         val urlEdit = findViewById<EditText>(R.id.openUrl)
         val openUrl = {
             val u = urlEdit.text.toString().trim()
-            if (u.isNotEmpty()) { urlEdit.setText(""); select(newBrowserTab(if (u.contains("://")) u else "http://$u")) }
+            if (u.isNotEmpty()) {
+                val full = if (u.contains("://")) u else "http://$u"
+                Env.addHistory(this, URL_HISTORY, full) // typed here: remember it
+                urlEdit.setText("")
+                select(newBrowserTab(full))
+            }
         }
         findViewById<Button>(R.id.openUrlBtn).setOnClickListener { openUrl() }
         urlEdit.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { openUrl(); true } else false }
@@ -146,17 +151,25 @@ class MainActivity : AppCompatActivity() {
         targetEdit.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { openTarget(); true } else false }
     }
 
-    /** Fills a history list with one row per entry: tap opens, long-press forgets. */
+    /** Fills a history list with one row per entry: tap opens, × removes it. */
     private fun fillHistory(container: LinearLayout, key: String, open: (String) -> Unit) {
         container.removeAllViews()
         Env.history(this, key).forEach { item ->
-            val row = Button(this, null, android.R.attr.borderlessButtonStyle)
-            row.text = item
-            row.isAllCaps = false
-            row.setTextColor(Color.WHITE)
-            row.gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
-            row.setOnClickListener { open(item) }
-            row.setOnLongClickListener { Env.removeHistory(this, key, item); fillHistory(container, key, open); true }
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val label = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = item
+                isAllCaps = false
+                setTextColor(Color.WHITE)
+                gravity = android.view.Gravity.START or android.view.Gravity.CENTER_VERTICAL
+                setOnClickListener { open(item) }
+            }
+            val del = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = "×"
+                setTextColor(Color.parseColor("#ff8080"))
+                setOnClickListener { Env.removeHistory(this@MainActivity, key, item); fillHistory(container, key, open) }
+            }
+            row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(del, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             container.addView(row, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
@@ -242,8 +255,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
         }
         val go = Button(this).apply { text = "Go" }
+        val star = Button(this).apply { text = "☆" } // bookmark: add the current page to the list
         bar.addView(url, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(go)
+        bar.addView(star)
         val web = WebView(this)
         web.settings.javaScriptEnabled = true
         web.settings.domStorageEnabled = true
@@ -258,27 +273,29 @@ class MainActivity : AppCompatActivity() {
         tab = Tab.Browser(button, column, web, url)
         tabs.add(tab)
         web.webViewClient = object : WebViewClient() {
-            override fun onPageFinished(view: WebView?, u: String?) {
-                url.setText(u ?: "")
-                if (!u.isNullOrBlank() && u != "about:blank") Env.addHistory(this@MainActivity, URL_HISTORY, u)
-            }
+            override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
         }
         web.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 if (!title.isNullOrBlank()) button.text = title.take(12)
             }
         }
-        val navigate = {
+        val navigate = { remember: Boolean ->
             var u = url.text.toString().trim()
             if (u.isNotEmpty()) {
                 if (!u.contains("://")) u = "http://$u"
+                if (remember) Env.addHistory(this, URL_HISTORY, u)
                 web.loadUrl(u)
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
             }
         }
-        go.setOnClickListener { navigate() }
-        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(); true } else false }
-        if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate() }
+        go.setOnClickListener { navigate(true) }
+        star.setOnClickListener {
+            val u = web.url ?: ""
+            if (u.isNotBlank() && u != "about:blank") { Env.addHistory(this, URL_HISTORY, u); toast("bookmarked") }
+        }
+        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(true); true } else false }
+        if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate(false) } // from the list: already there
         return tab
     }
 
