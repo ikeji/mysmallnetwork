@@ -3,7 +3,9 @@
 //	msnw server   [-server-key S] [-listen :4433] [-relay :4434] [-key file]
 //	msnw export   -key K -n NAME -t [host:]port [-t ...] [--all]
 //	msnw wrap-export -key K -n NAME [-p PORT] -- COMMAND [ARGS...]
-//	msnw client   -key K -n NAME[:port] [-l [addr]] | --socks5 [addr]
+//	msnw import   -key K -l [addr] NAME[:port]
+//	msnw connect  -key K NAME[:port]
+//	msnw socks5-proxy | http-proxy | proxy
 //	msnw mosh     -key K [-p PORT] [user@]NAME
 //	msnw gen-key
 //	msnw version
@@ -24,7 +26,11 @@ commands:
   server    run the rendezvous + relay server
   export    publish local services under a name
   wrap-export  run a command and publish the port it listens on
-  client    reach a published service (stdio, -l local port, --socks5)
+  import    bring a published port to a local port (-l [addr] NAME[:port])
+  connect   pipe stdin/stdout to a published port (nc style; ssh ProxyCommand)
+  socks5-proxy   SOCKS5 proxy on 127.0.0.1:1080 (msnw names via the tunnel)
+  http-proxy     HTTP proxy on 127.0.0.1:8080
+  proxy          both proxies in one process
   mosh      run mosh to a published host (ssh + UDP through the tunnel)
   gen-key   print a fresh random link key
   version   print the version
@@ -45,8 +51,16 @@ func main() {
 		cli.Export(args)
 	case "wrap-export", "wrap":
 		cli.WrapExport(args)
-	case "client":
-		cli.Client(args)
+	case "import":
+		cli.Import(args)
+	case "connect":
+		cli.Connect(args)
+	case "socks5-proxy", "socks5":
+		cli.Socks5Proxy(args)
+	case "http-proxy":
+		cli.HTTPProxy(args)
+	case "proxy":
+		cli.Proxy(args)
 	case "mosh":
 		cli.Mosh(args)
 	case "gen-key", "genkey":

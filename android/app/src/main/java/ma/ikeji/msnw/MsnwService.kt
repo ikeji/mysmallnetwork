@@ -146,7 +146,7 @@ class MsnwService : Service() {
                 Log.w(TAG, "no link key configured; not starting msnw")
                 return
             }
-            val cmd = listOf(Env.msnw(this).absolutePath, "client", "--http-proxy", "127.0.0.1:$PROXY_PORT",
+            val cmd = listOf(Env.msnw(this).absolutePath, "http-proxy", "127.0.0.1:$PROXY_PORT",
                 "-log", Env.logFile(this).absolutePath)
             val pb = ProcessBuilder(cmd).directory(Env.home(this)).redirectErrorStream(true)
             pb.environment().clear(); pb.environment().putAll(Env.environment(this))

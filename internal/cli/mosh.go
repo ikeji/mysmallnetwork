@@ -46,7 +46,7 @@ func Mosh(args []string) {
 	if lang == "" {
 		lang = "en_US.UTF-8"
 	}
-	proxy := fmt.Sprintf("ProxyCommand=%s client -n %s", shellQuote(self), shellQuote(name))
+	proxy := fmt.Sprintf("ProxyCommand=%s connect %s", shellQuote(self), shellQuote(name))
 	if *nf.verbose {
 		proxy += " -v"
 	}

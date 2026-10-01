@@ -146,7 +146,7 @@ sleep 1
 rc=0
 for force in "" 1; do
 	label=$([ -n "$force" ] && echo "forced-relay" || echo "auto")
-	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw" client -v -n sitea -port $PORT_B 2>"$LOG/client-$label.log" || true)
+	out=$(echo "hi-$label" | MSNW_FORCE_RELAY=$force ns siteB timeout 30 "$ROOT/bin/msnw" connect sitea -v -port $PORT_B 2>"$LOG/client-$label.log" || true)
 	via=$(grep -o 'via .*' "$LOG/client-$label.log" | head -1)
 	if [ "$out" = "echo:hi-$label" ]; then
 		echo "natsim: [$MODE/$label] OK  ($via)"
@@ -168,10 +168,10 @@ fi
 # Two relayed clients at once: the relay must keep their sessions apart. The
 # first connects, idles while the second connects, and only then talks. (The
 # second used to take over the exporter's relay binding and cut off the first.)
-(sleep 4; echo hi-first) | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" client -v -n sitea >"$LOG/first.out" 2>"$LOG/client-first.log" &
+(sleep 4; echo hi-first) | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" connect sitea -v >"$LOG/first.out" 2>"$LOG/client-first.log" &
 first=$!
 sleep 2
-second=$(echo hi-second | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" client -v -n sitea 2>"$LOG/client-second.log" || true)
+second=$(echo hi-second | MSNW_FORCE_RELAY=1 ns siteB timeout 15 "$ROOT/bin/msnw" connect sitea -v 2>"$LOG/client-second.log" || true)
 wait $first || true
 if [ "$(cat "$LOG/first.out")" = "echo:hi-first" ] && [ "$second" = "echo:hi-second" ]; then
 	echo "natsim: [$MODE/two-relayed] OK"

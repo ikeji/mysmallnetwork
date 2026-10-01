@@ -11,10 +11,10 @@ from behind NAT.
         └──────┬───────┘
    register ↗          ↖ lookup
 ┌──────────────┐  QUIC (P2P, direct or relayed)  ┌──────────────┐
-│ msnw export  │ ◀═════════════════════════════▶ │ msnw client  │
+│ msnw export  │ ◀═════════════════════════════▶ │ msnw import  │
 │  -n hogehoge │   1 TCP connection = 1 stream   │              │
-│  -t 1234     │                                 │ stdio / -l / │
-└──────┬───────┘                                 │   --socks5   │
+│  -t 1234     │                                 │ connect /    │
+└──────┬───────┘                                 │   proxies    │
        ▼                                         └──────────────┘
    nc -l 1234
 ```
@@ -93,7 +93,7 @@ exporter's `-u`.
 **4b. ssh from the laptop**
 
 ```
-ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
+ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey home' user@home
 ```
 
 The host name `home` is only what ssh displays; the ProxyCommand makes the
@@ -103,7 +103,7 @@ uses the same entry):
 ```
 Host home
     User user
-    ProxyCommand /path/to/msnw client -key mylonglongsecretkey -n home
+    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey home
 ```
 
 The key can also come from the `MSNW_KEY` environment variable, so if you do
@@ -116,7 +116,7 @@ Without a ProxyCommand, keep the laptop's port 2222 connected to port 22 at
 home:
 
 ```
-msnw client -key mylonglongsecretkey -n home -l 2222   # leave it running
+msnw import -key mylonglongsecretkey -l 2222 home        # leave it running
 ssh -p 2222 user@localhost                             # scp and rsync work the same way
 ```
 
@@ -183,23 +183,27 @@ command as `$PORT`. With neither, msnw watches the command and its children
 for a listening TCP socket (Linux, via /proc) and publishes that. The export
 ends when the command exits, and Ctrl-C stops both.
 
-### client
+### import, connect
 
 ```
-msnw client -key LINKKEY -n hogehoge    # pipe stdin/stdout (nc style, ssh ProxyCommand)
+msnw connect -key LINKKEY hogehoge      # pipe stdin/stdout (nc style, ssh ProxyCommand)
                                         # below, -key is assumed to be in $MSNW_KEY
-msnw client -n hogehoge:8080            # another port on the exporter
-msnw client -n exit:example.com:80      # any host through an --all exporter
+msnw connect hogehoge:8080              # another port on the exporter
+msnw connect exit:example.com:80        # any host through an --all exporter
 
-msnw client -n hogehoge -l              # listen on 127.0.0.1 on the exporter's default port number
-msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 -> hogehoge's default target
-msnw client -n hogehoge:8080 -l :5000   # listen on all interfaces
-msnw client -n hogehoge:60001 -l udp:60001   # forward UDP (one flow per source address)
+msnw import -l hogehoge                 # listen on 127.0.0.1 on the exporter's default port number
+msnw import -l 5000 hogehoge            # 127.0.0.1:5000 -> hogehoge's default target
+msnw import -l :5000 hogehoge:8080      # listen on all interfaces
+msnw import -l udp:60001 hogehoge:60001 # forward UDP (one flow per source address)
+```
 
-msnw client --socks5                    # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
-msnw client --http-proxy                # HTTP proxy on 127.0.0.1:8080 with the same rules (CONNECT + plain http)
-msnw client --socks5 --http-proxy       # both at once
-msnw client --socks5 :1080 -n exit      # unknown hosts go out through exit
+### socks5-proxy, http-proxy, proxy
+
+```
+msnw socks5-proxy                       # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
+msnw http-proxy                         # HTTP proxy on 127.0.0.1:8080 with the same rules (CONNECT + plain http)
+msnw proxy                              # both in one process (--socks5 addr / --http addr to change or "" to disable)
+msnw socks5-proxy -n exit :1080         # unknown hosts go out through exit
 ```
 
 How proxy destinations (SOCKS5 and HTTP proxy alike) are interpreted:
@@ -231,7 +235,7 @@ with the browser:
 
 ```
 msnw export -key K -n mypc -t 8765      # the service runs on this machine
-msnw client -key K --socks5             # on the machine with the browser
+msnw socks5-proxy -key K                # on the machine with the browser
 ```
 
 Then point the browser at `http://mypc/` (or `http://mypc.msnw/`). Because
@@ -259,18 +263,18 @@ reached directly, so the proxy can stay on all the time.
   as they do for a manual SOCKS5 setting. For an HTTP-proxy-only client,
   change `MSNW_PROXY` in the file to `PROXY 127.0.0.1:8080`.
 - **Android**: neither Chrome nor WebView (androidx `ProxyController`) can use
-  SOCKS, so run `msnw client --http-proxy` in Termux and set the Wi-Fi
+  SOCKS, so run `msnw http-proxy` in Termux and set the Wi-Fi
   network's proxy to host `127.0.0.1`, port `8080` (Settings → Wi-Fi → the
   network → Advanced → Proxy: Manual). Chrome then opens `http://mypc/`. The
   setting is per Wi-Fi network and does not apply on mobile data; an app that
   sets the same proxy through `ProxyController` works on any network. Without
-  a proxy at all, `msnw client -n mypc -l 8765` and `http://localhost:8765/`
+  a proxy at all, `msnw import -l 8765 mypc` and `http://localhost:8765/`
   work in every browser.
 
 Example: ssh
 
 ```
-ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
+ssh -o ProxyCommand='msnw connect hogehoge:22' user@anything
 ```
 
 Example: mosh (`msnw mosh`)

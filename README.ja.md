@@ -10,10 +10,10 @@
         └──────┬───────┘
      登録 ↗           ↖ 問い合わせ
 ┌──────────────┐  QUIC (P2P, 直結 or リレー)   ┌──────────────┐
-│ msnw export  │ ◀═══════════════════════════▶ │ msnw client  │
+│ msnw export  │ ◀═══════════════════════════▶ │ msnw import  │
 │  -n hogehoge │   1 TCP 接続 = 1 QUIC stream  │              │
-│  -t 1234     │                               │ stdio / -l / │
-└──────┬───────┘                               │   --socks5   │
+│  -t 1234     │                               │ connect /    │
+└──────┬───────┘                               │   proxies    │
        ▼                                       └──────────────┘
    nc -l 1234
 ```
@@ -87,7 +87,7 @@ msnw mosh -key mylonglongsecretkey user@home
 **4b. ノート PC から ssh する**
 
 ```
-ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
+ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey home' user@home
 ```
 
 ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
@@ -96,7 +96,7 @@ ssh -o ProxyCommand='msnw client -key mylonglongsecretkey -n home' user@home
 ```
 Host home
     User user
-    ProxyCommand /path/to/msnw client -key mylonglongsecretkey -n home
+    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey home
 ```
 
 キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
@@ -107,7 +107,7 @@ Host home
 ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
 
 ```
-msnw client -key mylonglongsecretkey -n home -l 2222   # 起動したままにする
+msnw import -key mylonglongsecretkey -l 2222 home        # 起動したままにする
 ssh -p 2222 user@localhost                             # scp や rsync も同じ要領
 ```
 
@@ -170,23 +170,27 @@ msnw wrap-export -key K -n foo -p 3000 -- npm start            # ポートが分
 TCP で待ち受けを始めるのを `/proc` で検出して公開する(Linux)。コマンドが終われば公開も終わり、
 Ctrl-C で両方止まる。
 
-### client
+### import, connect
 
 ```
-msnw client -key LINKKEY -n hogehoge    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
+msnw connect -key LINKKEY hogehoge      # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
                                         # 以下 -key は $MSNW_KEY にあるものとして省略
-msnw client -n hogehoge:8080            # exporter 側の別ポートを指定
-msnw client -n exit:example.com:80      # --all な exporter 経由で任意ホストへ
+msnw connect hogehoge:8080              # exporter 側の別ポートを指定
+msnw connect exit:example.com:80        # --all な exporter 経由で任意ホストへ
 
-msnw client -n hogehoge -l              # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
-msnw client -n hogehoge -l 5000         # 127.0.0.1:5000 → hogehoge の既定ターゲット
-msnw client -n hogehoge:8080 -l :5000   # 全インターフェイスで listen
-msnw client -n hogehoge:60001 -l udp:60001   # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw import -l hogehoge                 # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
+msnw import -l 5000 hogehoge            # 127.0.0.1:5000 → hogehoge の既定ターゲット
+msnw import -l :5000 hogehoge:8080      # 全インターフェイスで listen
+msnw import -l udp:60001 hogehoge:60001 # UDP を転送(送信元アドレスごとに 1 フロー)
+```
 
-msnw client --socks5                    # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
-msnw client --http-proxy                # 127.0.0.1:8080 で HTTP プロキシ。同じ規則(CONNECT と平文 http)
-msnw client --socks5 --http-proxy       # 両方同時
-msnw client --socks5 :1080 -n exit      # 不明なホストは exit 経由で外へ
+### socks5-proxy, http-proxy, proxy
+
+```
+msnw socks5-proxy                       # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
+msnw http-proxy                         # 127.0.0.1:8080 で HTTP プロキシ。同じ規則(CONNECT と平文 http)
+msnw proxy                              # 両方を 1 プロセスで(--socks5 addr / --http addr で変更、"" で無効)
+msnw socks5-proxy -n exit :1080         # 不明なホストは exit 経由で外へ
 ```
 
 プロキシ(SOCKS5 と HTTP プロキシで共通)での宛先ホストの解釈:
@@ -216,7 +220,7 @@ msnw の名前以外は手元から直接繋ぐので、ブラウザに常時設
 
 ```
 msnw export -key K -n mypc -t 8765      # サービスが動いている PC
-msnw client -key K --socks5             # ブラウザのある PC
+msnw socks5-proxy -key K                # ブラウザのある PC
 ```
 
 あとはブラウザで `http://mypc/`(または `http://mypc.msnw/`)を開く。`mypc` は
@@ -240,17 +244,17 @@ msnw client -key K --socks5             # ブラウザのある PC
   PAC で指定した SOCKS5 では手動設定と同様にプロキシ側で名前解決する。HTTP プロキシ
   だけで使うなら、ファイル内の `MSNW_PROXY` を `PROXY 127.0.0.1:8080` に変える。
 - **Android**: Chrome も WebView(androidx の `ProxyController`)も SOCKS は使えないので、
-  Termux で `msnw client --http-proxy` を動かし、Wi-Fi ネットワークのプロキシ設定を
+  Termux で `msnw http-proxy` を動かし、Wi-Fi ネットワークのプロキシ設定を
   ホスト `127.0.0.1`、ポート `8080` にする(設定 → Wi-Fi → そのネットワーク → 詳細 →
   プロキシ: 手動)。これで Chrome から `http://mypc/` が開ける。この設定は Wi-Fi ごとで、
   モバイル回線では効かない。同じプロキシを `ProxyController` で設定する自作アプリなら
-  回線を問わず効く。プロキシを使わないなら `msnw client -n mypc -l 8765` で
+  回線を問わず効く。プロキシを使わないなら `msnw import -l 8765 mypc` で
   `http://localhost:8765/` を開く方法がどのブラウザでも使える。
 
 例: ssh
 
 ```
-ssh -o ProxyCommand='msnw client -n hogehoge:22' user@anything
+ssh -o ProxyCommand='msnw connect hogehoge:22' user@anything
 ```
 
 例: mosh(`msnw mosh`)

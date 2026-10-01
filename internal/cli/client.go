@@ -322,7 +322,7 @@ func parseWithTrailingFlags(fs *flag.FlagSet, args []string) []string {
 }
 
 // exportEnv puts the effective connection options into the environment so
-// that child processes (ssh's ProxyCommand running "msnw client") inherit
+// that child processes (ssh's ProxyCommand running "msnw connect") inherit
 // them without putting the key on a command line.
 func (nf *nodeFlags) exportEnv() {
 	os.Setenv("MSNW_SERVER", *nf.server)
@@ -365,45 +365,111 @@ func quietQUIC() {
 	}
 }
 
-// Client reaches services published by msnw export.
-func Client(args []string) {
-	args = netutil.OptionalValueFlag(args, "l", "auto")
-	args = netutil.OptionalValueFlag(args, "socks5", "127.0.0.1:1080")
-	args = netutil.OptionalValueFlag(args, "http-proxy", "127.0.0.1:8080")
-	fs := flag.NewFlagSet("msnw client", flag.ExitOnError)
-	name := fs.String("n", "", "exporter NAME[:port|:host:port] to connect to (default exporter in proxy modes)")
-	listen := fs.String("l", "", "listen locally (port, :port, host:port, or udp:port; bare -l uses the exporter's port)")
-	socks := fs.String("socks5", "", "run a SOCKS5 proxy (bare --socks5 listens on 127.0.0.1:1080)")
-	httpProxy := fs.String("http-proxy", "", "run an HTTP proxy (bare --http-proxy listens on 127.0.0.1:8080); may be combined with --socks5")
-	nf := addNodeFlags(fs)
-	fs.Parse(args)
+// Each consumer-side command parses its own flags, builds the shared pool
+// and hands over to one of the runners below.
 
-	if *nf.linkKey == "" || (*name == "" && *socks == "" && *httpProxy == "") {
-		fmt.Fprintln(os.Stderr, "usage: msnw client -key LINKKEY -n NAME[:port] [-l [addr]] | --socks5 [addr] | --http-proxy [addr] [-n NAME]   (-s server, -server-key K)")
-		os.Exit(2)
+func usage(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+	os.Exit(2)
+}
+
+func startPool(nf *nodeFlags) (*pool, func()) {
+	if *nf.linkKey == "" {
+		usage("a link key is required (-key or $MSNW_KEY)")
 	}
 	log.SetOutput(os.Stderr)
 	p, stop, err := newPool(nf)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer stop()
-	ctx := p.ctx
+	return p, stop
+}
 
-	switch {
-	case *socks != "" || *httpProxy != "":
-		if *socks != "" {
-			go runSocks(ctx, p, *socks, *name)
-		}
-		if *httpProxy != "" {
-			go runHTTPProxy(ctx, p, *httpProxy, *name)
-		}
-		<-ctx.Done()
-	case *listen != "":
-		runListen(ctx, p, *name, *listen)
-	default:
-		runStdio(ctx, p, *name)
+// Connect pipes stdin/stdout to a published service: msnw connect NAME[:port]
+func Connect(args []string) {
+	fs := flag.NewFlagSet("msnw connect", flag.ExitOnError)
+	nf := addNodeFlags(fs)
+	pos := parseWithTrailingFlags(fs, args)
+	if len(pos) != 1 {
+		usage("usage: msnw connect [-key LINKKEY] NAME[:port|:host:port]")
 	}
+	p, stop := startPool(nf)
+	defer stop()
+	runStdio(p.ctx, p, pos[0])
+}
+
+// Import listens locally and forwards to a published service:
+// msnw import -l [addr] NAME[:port]   (addr: port, :port, host:port or udp:port; bare -l = the exporter's port)
+func Import(args []string) {
+	args = netutil.OptionalValueFlag(args, "l", "auto")
+	fs := flag.NewFlagSet("msnw import", flag.ExitOnError)
+	listen := fs.String("l", "", "local address to listen on: port, :port, host:port or udp:port (bare -l uses the exporter's port)")
+	nf := addNodeFlags(fs)
+	pos := parseWithTrailingFlags(fs, args)
+	if len(pos) != 1 || *listen == "" {
+		usage("usage: msnw import [-key LINKKEY] -l [addr] NAME[:port|:host:port]")
+	}
+	p, stop := startPool(nf)
+	defer stop()
+	runListen(p.ctx, p, pos[0], *listen)
+}
+
+// proxyFlags are shared by the proxy commands.
+func proxyFlags(fs *flag.FlagSet) (nf *nodeFlags, def *string) {
+	def = fs.String("n", "", "default exporter for destinations that are not msnw names (otherwise reached directly)")
+	return addNodeFlags(fs), def
+}
+
+// Socks5Proxy runs a SOCKS5 proxy: msnw socks5-proxy [addr]
+func Socks5Proxy(args []string) {
+	fs := flag.NewFlagSet("msnw socks5-proxy", flag.ExitOnError)
+	nf, def := proxyFlags(fs)
+	pos := parseWithTrailingFlags(fs, args)
+	addr := "127.0.0.1:1080"
+	if len(pos) > 1 {
+		usage("usage: msnw socks5-proxy [-key LINKKEY] [-n DEFAULT] [addr]   (default 127.0.0.1:1080)")
+	} else if len(pos) == 1 {
+		addr = pos[0]
+	}
+	p, stop := startPool(nf)
+	defer stop()
+	runSocks(p.ctx, p, addr, *def)
+}
+
+// HTTPProxy runs an HTTP proxy: msnw http-proxy [addr]
+func HTTPProxy(args []string) {
+	fs := flag.NewFlagSet("msnw http-proxy", flag.ExitOnError)
+	nf, def := proxyFlags(fs)
+	pos := parseWithTrailingFlags(fs, args)
+	addr := "127.0.0.1:8080"
+	if len(pos) > 1 {
+		usage("usage: msnw http-proxy [-key LINKKEY] [-n DEFAULT] [addr]   (default 127.0.0.1:8080)")
+	} else if len(pos) == 1 {
+		addr = pos[0]
+	}
+	p, stop := startPool(nf)
+	defer stop()
+	runHTTPProxy(p.ctx, p, addr, *def)
+}
+
+// Proxy runs both proxies in one process: msnw proxy [--socks5 addr] [--http addr]
+func Proxy(args []string) {
+	fs := flag.NewFlagSet("msnw proxy", flag.ExitOnError)
+	socks := fs.String("socks5", "127.0.0.1:1080", "SOCKS5 listen address (\"\" to disable)")
+	httpAddr := fs.String("http", "127.0.0.1:8080", "HTTP proxy listen address (\"\" to disable)")
+	nf, def := proxyFlags(fs)
+	if len(parseWithTrailingFlags(fs, args)) != 0 || (*socks == "" && *httpAddr == "") {
+		usage("usage: msnw proxy [-key LINKKEY] [-n DEFAULT] [--socks5 addr] [--http addr]")
+	}
+	p, stop := startPool(nf)
+	defer stop()
+	if *socks != "" {
+		go runSocks(p.ctx, p, *socks, *def)
+	}
+	if *httpAddr != "" {
+		go runHTTPProxy(p.ctx, p, *httpAddr, *def)
+	}
+	<-p.ctx.Done()
 }
 
 func runStdio(ctx context.Context, p *pool, spec string) {

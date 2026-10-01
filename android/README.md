@@ -39,7 +39,7 @@ into the APK. arm64-v8a only for now.
   dbclient. Unknown host keys are accepted on first use (`-y`) and kept in the
   app's private `home/.ssh/known_hosts`.
 - A service owns everything long-lived: the
-  `msnw client --http-proxy 127.0.0.1:8080` process for the browser and the
+  `msnw http-proxy 127.0.0.1:8080` process for the browser and the
   terminal sessions. The activity binds to it and only attaches views, so
   mosh sessions survive the activity being destroyed (back key, swipe from
   recents). The service is in the foreground (notification, wake lock) only

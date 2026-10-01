@@ -134,14 +134,9 @@ func Export(args []string) {
 	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
-	genKey := fs.Bool("gen-key", false, "print a fresh random link key and exit")
 	verbose := fs.Bool("v", false, "verbose logging")
 	fs.Parse(args)
 
-	if *genKey {
-		fmt.Println(ident.GenerateKey())
-		return
-	}
 	if *name == "" || *linkKey == "" || (len(tcpTargets) == 0 && len(udpTargets) == 0 && !*all) {
 		fmt.Fprintln(os.Stderr, "usage: msnw export -n NAME -t [host:]port [-t ...] [-u [host:]port ...] [--all] -key LINKKEY [-s server:port] [-server-key K]")
 		os.Exit(2)
