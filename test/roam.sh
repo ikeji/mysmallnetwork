@@ -3,11 +3,23 @@
 # a new NAT WAN address mid-session. A UDP flow must recover quickly and a
 # TCP connection must survive with its byte stream intact.
 #
-#   test/natsim.sh cone -- test/roam.sh
+#   test/natsim.sh cone -- test/roam.sh            # old network goes away
+#   ROAM_MODE=handover test/natsim.sh cone -- test/roam.sh
+#   ROAM_MODE=exporter test/natsim.sh cone -- test/roam.sh
+#
+# ROAM_MODE=handover keeps the old LAN address up and only moves the default
+# route (and the NAT's public address): that is how a phone joins Wi-Fi while
+# mobile data is still connected, so no address disappears and the client
+# must notice from the route alone. ROAM_MODE=exporter moves the exporter's
+# site the same way instead of the client's.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 L=${NATSIM_LOG:-$(mktemp -d)}
-LIMIT=${ROAM_LIMIT:-15}   # seconds allowed for recovery
+MODE=${ROAM_MODE:-switch}
+# Seconds allowed for recovery. When the exporter moves, the client can only
+# notice through the peer connection's idle timeout (20 s).
+case $MODE in exporter) DEF=30 ;; *) DEF=15 ;; esac
+LIMIT=${ROAM_LIMIT:-$DEF}
 export MSNW_KEY=roam MSNW_SERVER_KEY=natsim MSNW_SERVER=10.0.0.1:4433 QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
 ns() { ip netns exec "$@"; }
 # For background jobs: exec replaces the forked subshell so "kill $(jobs -p)"
@@ -94,15 +106,36 @@ sys.exit(0 if recovered <= limit else 1)
 PY
 PING=$!
 sleep 5
-# Delete before add: with promote_secondaries=0 (the kernel default) deleting
-# the primary address would also drop a secondary one in the same subnet.
-ns siteB ip addr del 192.168.2.10/24 dev ethB
-ns siteB ip addr add 192.168.2.11/24 dev ethB
-ns siteB ip route replace default via 192.168.2.1
-ns natB ip addr del 10.0.0.3/24 dev wanB
-ns natB ip addr add 10.0.0.4/24 dev wanB
+case $MODE in
+switch)
+	# Delete before add: with promote_secondaries=0 (the kernel default) deleting
+	# the primary address would also drop a secondary one in the same subnet.
+	ns siteB ip addr del 192.168.2.10/24 dev ethB
+	ns siteB ip addr add 192.168.2.11/24 dev ethB
+	ns siteB ip route replace default via 192.168.2.1
+	;;
+handover)
+	ns siteB ip addr add 192.168.2.11/24 dev ethB
+	ns siteB ip route replace default via 192.168.2.1 src 192.168.2.11
+	;;
+exporter)
+	# The exporter's site moves instead (a laptop joining another Wi-Fi);
+	# the exporter must re-register so the server hands out its new address.
+	ns siteA ip addr add 192.168.1.11/24 dev ethA
+	ns siteA ip route replace default via 192.168.1.1 src 192.168.1.11
+	ns natA ip addr del 10.0.0.2/24 dev wanA
+	ns natA ip addr add 10.0.0.5/24 dev wanA
+	;;
+*)
+	echo "roam: unknown ROAM_MODE $MODE"; kill $(jobs -p) 2>/dev/null; exit 2
+	;;
+esac
+if [ "$MODE" != exporter ]; then
+	ns natB ip addr del 10.0.0.3/24 dev wanB
+	ns natB ip addr add 10.0.0.4/24 dev wanB
+fi
 wait $PING; rc=$?
 wait $TCP || rc=1
 kill $(jobs -p) 2>/dev/null
-[ $rc -ne 0 ] && echo "roam: logs in $L" || rm -rf "$L"
+if [ $rc -ne 0 ] || [ -n "${ROAM_KEEP_LOG:-}" ]; then echo "roam($MODE): logs in $L"; else rm -rf "$L"; fi
 exit $rc

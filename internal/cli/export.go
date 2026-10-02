@@ -216,11 +216,23 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 		}()
 	}
 
+	// When the default network moves (laptop joins another Wi-Fi), register
+	// again right away so the server learns the new address, instead of
+	// waiting for the old control connection to time out or migrate.
+	go node.WatchRoute(ctx, func(from, to string) {
+		log.Printf("local network changed (%s -> %s); re-registering", from, to)
+		node.DropControl()
+	})
+
 	backoff := time.Second
 	for ctx.Err() == nil {
+		started := time.Now()
 		err := node.Register(ctx, o.linkKey, name, onIncoming)
 		if ctx.Err() != nil {
 			break
+		}
+		if time.Since(started) > time.Minute {
+			backoff = time.Second // it was working; this is a fresh outage
 		}
 		log.Printf("disconnected from server: %v; retrying in %s", err, backoff)
 		select {

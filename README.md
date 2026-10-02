@@ -337,10 +337,17 @@ child log there.
 
 ## Roaming (when the network changes)
 
-The client checks its own address list every 2 seconds; on a change it drops
-its peer and server connections immediately and redials. If the path dies
-without an address change (a NAT mapping expired, say), the QUIC idle timeout
-catches it (30 seconds, keepalive every 10).
+Every 2 seconds the client checks which local address the kernel would use to
+reach the server and whether any local address has disappeared. When either
+changes (confirmed on the next tick, to ride out flaps) it drops its peer and
+server connections and redials. The route check is what catches a phone
+joining Wi-Fi while mobile data is still up: no address goes away, only the
+default network moves, and on Android listing interfaces is not allowed
+anyway. If a dial fails on every path, relay included, the client also drops
+its server connection, since that usually means the server's view of its
+address is stale. If the path dies without any visible change (a NAT mapping
+expired, say, or the exporter moved), the QUIC idle timeout catches it (20
+seconds, keepalive every 5).
 
 TCP connections survive the redial thanks to the resumable session layer
 (`internal/resume`):
@@ -360,7 +367,10 @@ recreated on the next packet, which is how mosh comes back within seconds.
 
 `make roam` (`test/natsim.sh cone -- test/roam.sh`) changes the client site's
 LAN address and NAT WAN address mid-session and checks the UDP recovery time
-and that a numbered TCP echo continues without loss or duplication. A real sshd
+and that a numbered TCP echo continues without loss or duplication. It runs
+three times: with the old address removed, with the old address kept and only
+the default route moved (`ROAM_MODE=handover`, like a phone switching to
+Wi-Fi), and with the exporter's site moving instead (`ROAM_MODE=exporter`). A real sshd
 and ssh placed in siteA / siteB, with the network changed during a running
 command, finish with all output and exit code 0.
 

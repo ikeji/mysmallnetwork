@@ -72,6 +72,13 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	}
 	conn, via, err := p.node.DialPeer(ctx, info)
 	if err != nil {
+		// Every path failed, relay included. That usually means the server's
+		// view of us is stale (the address it saw on the control connection
+		// is not the one our packets leave from any more, as after a network
+		// change the watcher missed), so start over with a fresh control
+		// connection on the next attempt rather than keep asking from the
+		// old one.
+		p.node.DropControl()
 		return nil, 0, err
 	}
 	port, ver, err := peer.AuthenticateAsClient(ctx, conn, key)
@@ -139,18 +146,27 @@ func (p *pool) dropAll(reason string) {
 	p.node.DropControl()
 }
 
-// watchNetwork polls the local address set and drops connections when an
-// address disappears, so roaming between networks recovers in seconds
-// instead of waiting for the idle timeout. Added addresses are ignored: they
-// cannot break an existing path, and after a network change IPv6 addresses
-// tend to arrive one by one for several seconds, which must not cause a
-// redial each time. A removal has to persist for one extra tick before it
-// counts, to ride out brief flaps.
+// watchNetwork polls for a network change and drops connections when one is
+// confirmed, so roaming between networks recovers in seconds instead of
+// waiting for the idle timeout. Two signals are watched:
+//
+//   - the local address the kernel picks to reach the server (the route
+//     source). It changes when the default network moves, even when the old
+//     network stays up for a while, which is how phones hand over from
+//     mobile data to Wi-Fi, and it works where listing interfaces is not
+//     allowed (Android);
+//   - a local address disappearing, for networks that simply go away.
+//
+// Added addresses are ignored: they cannot break an existing path, and after
+// a network change IPv6 addresses tend to arrive one by one for several
+// seconds, which must not cause a redial each time. A change has to persist
+// for one extra tick before it counts, to ride out brief flaps.
 func (p *pool) watchNetwork(ctx context.Context) {
 	known := addrSet(netutil.LocalAddrs(0))
+	route := p.node.RouteSource()
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
-	pending := false
+	pending := ""
 	for {
 		select {
 		case <-ctx.Done():
@@ -158,22 +174,29 @@ func (p *pool) watchNetwork(ctx context.Context) {
 		case <-t.C:
 		}
 		cur := addrSet(netutil.LocalAddrs(0))
-		lost := false
-		for a := range known {
-			if !cur[a] {
-				lost = true
-				break
+		curRoute := p.node.RouteSource()
+		reason := ""
+		if curRoute != "" && route != "" && curRoute != route {
+			reason = fmt.Sprintf("local network changed (%s -> %s)", route, curRoute)
+		} else {
+			for a := range known {
+				if !cur[a] {
+					reason = "local network changed (" + a + " gone)"
+					break
+				}
 			}
 		}
 		switch {
-		case lost && pending:
-			known = cur
-			pending = false
-			p.dropAll("local network changed")
-		case lost:
-			pending = true // confirm on the next tick
+		case reason != "" && pending != "":
+			known, route, pending = cur, curRoute, ""
+			p.dropAll(reason)
+		case reason != "":
+			pending = reason // confirm on the next tick
 		default:
-			pending = false
+			pending = ""
+			if curRoute != "" {
+				route = curRoute
+			}
 			for a := range cur {
 				known[a] = true
 			}

@@ -40,8 +40,10 @@ roam: bin/msnw
 	@if [ "$$(uname -s)" != Linux ] || ! command -v unshare >/dev/null || \
 	   ! { command -v nft >/dev/null || [ -x /usr/sbin/nft ]; }; then \
 		echo "roam: skipped (needs Linux, unshare and nft)"; exit 0; fi; \
-	out=$$(test/natsim.sh cone -- test/roam.sh 2>&1); rc=$$?; \
-	echo "$$out" | grep -v 'reach the server\|server='; exit $$rc
+	rc=0; for m in switch handover exporter; do \
+		out=$$(ROAM_MODE=$$m test/natsim.sh cone -- test/roam.sh 2>&1) || rc=1; \
+		echo "$$out" | sed "s/^/[$$m] /" | grep -v 'reach the server\|server='; \
+	done; exit $$rc
 
 # Cross-compile for common targets into bin/<os>-<arch>/
 cross:

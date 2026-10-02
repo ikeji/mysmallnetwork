@@ -82,6 +82,52 @@ func (n *Node) Close() error { return n.Transport.Close() }
 // LocalCandidates are this host's LAN addresses on the shared port.
 func (n *Node) LocalCandidates() []string { return netutil.LocalAddrs(n.Port()) }
 
+// RouteSource is the local address the kernel would use to reach the server
+// right now ("" if there is no route). It is a cheap probe (a connected UDP
+// socket sends nothing) and the most reliable sign of a network change: it
+// flips when the default network moves, including on Android where listing
+// interfaces is not permitted and a new network appears without the old one
+// going away first.
+func (n *Node) RouteSource() string {
+	c, err := net.DialUDP("udp", nil, n.Server)
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	return c.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// WatchRoute polls RouteSource every 2 seconds and calls onChange when it
+// moved to a different address and stayed there for a second tick. Losing
+// the route altogether is not reported; getting it back on another address
+// is.
+func (n *Node) WatchRoute(ctx context.Context, onChange func(from, to string)) {
+	route := n.RouteSource()
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	pending := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		cur := n.RouteSource()
+		switch {
+		case cur == "" || cur == route:
+			pending = false
+		case pending:
+			from := route
+			route, pending = cur, false
+			onChange(from, cur)
+		case route == "":
+			route = cur // first route ever: nothing to drop
+		default:
+			pending = true // confirm on the next tick
+		}
+	}
+}
+
 func ctrlConfig() *quic.Config {
 	return &quic.Config{
 		MaxIdleTimeout:       45 * time.Second,
@@ -93,8 +139,8 @@ func ctrlConfig() *quic.Config {
 
 func peerConfig() *quic.Config {
 	return &quic.Config{
-		MaxIdleTimeout:       30 * time.Second,
-		KeepAlivePeriod:      10 * time.Second,
+		MaxIdleTimeout:       20 * time.Second,
+		KeepAlivePeriod:      5 * time.Second,
 		HandshakeIdleTimeout: 6 * time.Second,
 		MaxIncomingStreams:   4096,
 		EnableDatagrams:      true,
@@ -322,7 +368,12 @@ func (n *Node) DialPeer(ctx context.Context, info *PeerInfo) (*quic.Conn, string
 	// saw (e.g. the exporter sits behind a symmetric NAT and we are reachable
 	// anyway). Dial whatever punches us.
 	if !forceRelay {
+		seen := map[string]bool{}
 		go n.learnFromPunches(ctx, info.Session, func(addr string) {
+			if seen[addr] { // punches repeat every few hundred ms
+				return
+			}
+			seen[addr] = true
 			n.logf("learned candidate %s from punch", addr)
 			dial(n.Transport, addr, "direct "+addr+" (learned)", 0)
 		})

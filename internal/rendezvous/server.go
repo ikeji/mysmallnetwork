@@ -39,9 +39,18 @@ type Server struct {
 type exporter struct {
 	name       string
 	fp         string
-	candidates []string
+	candidates []string // server-observed address first, then LAN addresses
+	conn       *quic.Conn
 	stream     *quic.Stream
 	writeMu    sync.Mutex
+}
+
+// currentCandidates is candidates with the server-observed address refreshed
+// from the control connection, which may have migrated since registration
+// (the exporter changed networks without its control connection breaking).
+func (ex *exporter) currentCandidates() []string {
+	out := append([]string{ex.conn.RemoteAddr().String()}, ex.candidates...)
+	return netutil.Dedup(out)
 }
 
 // Run serves the control listener and the relay socket until ctx ends.
@@ -150,7 +159,7 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 
 	switch m.Type {
 	case proto.TypeRegister:
-		s.handleRegister(ctx, st, m, cands, remote)
+		s.handleRegister(ctx, conn, st, m, cands, remote)
 	case proto.TypeConnect:
 		s.handleConnect(st, m, cands, remote)
 	default:
@@ -158,11 +167,12 @@ func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Str
 	}
 }
 
-func (s *Server) handleRegister(ctx context.Context, st *quic.Stream, m *proto.Message, cands []string, remote string) {
+func (s *Server) handleRegister(ctx context.Context, conn *quic.Conn, st *quic.Stream, m *proto.Message, cands []string, remote string) {
 	ex := &exporter{
 		name:       m.Name,
 		fp:         ident.NormalizeFP(m.Fingerprint),
 		candidates: cands,
+		conn:       conn,
 		stream:     st,
 	}
 	s.mu.Lock()
@@ -214,8 +224,9 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		return
 	}
 	session := newSession()
-	s.relay.allow(session, ipOf(remote), ipOf(ex.candidates[0]))
-	log.Printf("%s: connect %s (%s) -> %s session=%s", remote, short(m.Name), versionOf(m), ex.candidates[0], session[:8])
+	exCands := ex.currentCandidates()
+	s.relay.allow(session, ipOf(remote), ipOf(exCands[0]))
+	log.Printf("%s: connect %s (%s) -> %s session=%s", remote, short(m.Name), versionOf(m), exCands[0], session[:8])
 
 	err := ex.send(&proto.Message{
 		Type:            proto.TypeIncoming,
@@ -233,7 +244,7 @@ func (s *Server) handleConnect(st *quic.Stream, m *proto.Message, cands []string
 		Version:         buildinfo.Version(),
 		Session:         session,
 		PeerFingerprint: ex.fp,
-		Candidates:      ex.candidates,
+		Candidates:      exCands,
 		RelayPort:       s.RelayPort,
 	})
 }
