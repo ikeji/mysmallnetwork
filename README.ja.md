@@ -4,19 +4,21 @@
 
 名前でサービスを公開して、NAT の向こうから P2P で繋ぎに行く小さなトンネル。
 
+```mermaid
+flowchart TB
+    srv["msnw server<br/>QUIC 制御 :4433 / UDP relay :4434<br/>紹介、NAT 越えの手伝い、最後の手段の中継"]
+    subgraph home["自宅 PC"]
+        ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
+    end
+    subgraph laptop["ノート PC"]
+        im["msnw import / connect / プロキシ"]
+    end
+    srv <-->|"制御: register"| ex
+    srv <-->|"制御: lookup"| im
+    home <==>|"QUIC トンネル、P2P<br/>(直結または中継)"| laptop
 ```
-        ┌──────────────┐  紹介 / NAT 越え補助 / 最後の手段のリレー
-        │ msnw server  │  (QUIC 制御 :4433, UDP リレー :4434)
-        └──────┬───────┘
-     登録 ↗           ↖ 問い合わせ
-┌──────────────┐  QUIC (P2P, 直結 or リレー)   ┌──────────────┐
-│ msnw export  │ ◀═══════════════════════════▶ │ msnw import  │
-│  -n hogehoge │   1 TCP 接続 = 1 QUIC stream  │              │
-│  -t 1234     │                               │ connect /    │
-└──────┬───────┘                               │   proxies    │
-       ▼                                       └──────────────┘
-   nc -l 1234
-```
+
+トンネルを通る TCP 接続 1 本が QUIC ストリーム 1 本になる。
 
 ## クイックスタート
 
@@ -74,10 +76,17 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
 
 ### mosh
 
-```
-ノート PC                                                     自宅 PC
-mosh-client ──UDP──▶ msnw mosh ════ QUIC トンネル ════▶ msnw export ──UDP──▶ mosh-server :60001
-    ssh ─ProxyCommand─▶ (msnw connect) ═══════════════▶     -t 22    ──TCP──▶ sshd :22 (mosh-server を起動)
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
+    end
+    subgraph home["自宅 PC"]
+        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
+        ex -->|"TCP、最初の 1 回"| sshd["sshd :22"]
+        sshd -.->|起動| ms
+    end
+    mm ==>|QUIC トンネル| ex
 ```
 
 自宅 PC:
@@ -102,9 +111,15 @@ exporter 側の `-u` も合わせる。
 
 ### ssh
 
-```
-ノート PC                                                     自宅 PC
-ssh ─ProxyCommand─▶ msnw connect ════ QUIC トンネル ════▶ msnw export ──TCP──▶ sshd :22
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        s["ssh user@home"] -->|ProxyCommand| mc["msnw connect home"]
+    end
+    subgraph home["自宅 PC"]
+        ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
+    end
+    mc ==>|QUIC トンネル| ex
 ```
 
 自宅 PC:
@@ -131,9 +146,15 @@ Host home
 ProxyCommand を使わず、ノート PC のローカルポートを自宅の 22 番に繋いでおく方法もある。
 scp や rsync も同じ要領:
 
-```
-ノート PC                                                     自宅 PC
-ssh -p 2222 localhost ──▶ msnw import -l 2222 ════ QUIC ════▶ msnw export ──TCP──▶ sshd :22
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 home"]
+    end
+    subgraph home["自宅 PC"]
+        ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
+    end
+    im ==>|QUIC トンネル| ex
 ```
 
 ```
@@ -145,10 +166,16 @@ ssh -p 2222 user@localhost
 
 開発サーバーを起動と同時に公開し、ノート PC のブラウザから名前で開く。
 
-```
-ノート PC                                                       自宅 PC
-ブラウザ ─proxy─▶ msnw http-proxy :8080 ════ QUIC トンネル ════▶ msnw wrap-export ──TCP──▶ jekyll :4000
-                                                                                     └──▶ livereload :35729
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        b["ブラウザ: http://blog/"] -->|"プロキシ 127.0.0.1:8080"| hp["msnw http-proxy"]
+    end
+    subgraph home["自宅 PC"]
+        we["msnw wrap-export -n blog"] -->|TCP| j["jekyll :4000"]
+        we -->|TCP| lr["livereload :35729"]
+    end
+    hp ==>|QUIC トンネル| we
 ```
 
 自宅 PC:
@@ -176,9 +203,15 @@ msnw http-proxy -key mylonglongsecretkey      # 127.0.0.1:8080 で待つ
 
 いまいるディレクトリを同じ要領で:
 
-```
-ノート PC                                                       自宅 PC
-ブラウザ / curl ─▶ msnw http-proxy :8080 ════ QUIC トンネル ════▶ msnw wrap-export ──TCP──▶ python -m http.server :8000
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        b["ブラウザ / curl: http://files/"] -->|"プロキシ 127.0.0.1:8080"| hp["msnw http-proxy"]
+    end
+    subgraph home["自宅 PC"]
+        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
+    end
+    hp ==>|QUIC トンネル| we
 ```
 
 ```

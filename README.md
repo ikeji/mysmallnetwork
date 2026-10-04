@@ -5,19 +5,21 @@
 A small tunnel: publish a service under a name, and reach it peer-to-peer
 from behind NAT.
 
+```mermaid
+flowchart TB
+    srv["msnw server<br/>QUIC control :4433 / UDP relay :4434<br/>introduction, NAT traversal help, relay of last resort"]
+    subgraph home["home PC"]
+        ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
+    end
+    subgraph laptop
+        im["msnw import / connect / proxies"]
+    end
+    srv <-->|"control: register"| ex
+    srv <-->|"control: lookup"| im
+    home <==>|"QUIC tunnel, peer-to-peer<br/>(direct or relayed)"| laptop
 ```
-        ┌──────────────┐  introduction / NAT traversal help / relay of last resort
-        │ msnw server  │  (QUIC control :4433, UDP relay :4434)
-        └──────┬───────┘
-   register ↗          ↖ lookup
-┌──────────────┐  QUIC (P2P, direct or relayed)  ┌──────────────┐
-│ msnw export  │ ◀═════════════════════════════▶ │ msnw import  │
-│  -n hogehoge │   1 TCP connection = 1 stream   │              │
-│  -t 1234     │                                 │ connect /    │
-└──────┬───────┘                                 │   proxies    │
-       ▼                                         └──────────────┘
-   nc -l 1234
-```
+
+One TCP connection through the tunnel is one QUIC stream.
 
 ## Quick start
 
@@ -80,10 +82,17 @@ relay.ikeji.ma is the default. In every case:
 
 ### mosh
 
-```
-laptop                                                      home PC
-mosh-client ──UDP──▶ msnw mosh ════ QUIC tunnel ════▶ msnw export ──UDP──▶ mosh-server :60001
-    ssh ─ProxyCommand─▶ (msnw connect) ═════════════▶      -t 22   ──TCP──▶ sshd :22  (starts mosh-server)
+```mermaid
+flowchart LR
+    subgraph laptop
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
+    end
+    subgraph home["home PC"]
+        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
+        ex -->|TCP, once| sshd["sshd :22"]
+        sshd -.->|starts| ms
+    end
+    mm ==>|QUIC tunnel| ex
 ```
 
 Home PC:
@@ -108,9 +117,15 @@ use another port range pass `-p 60001:60010` and match the exporter's `-u`.
 
 ### ssh
 
-```
-laptop                                                      home PC
-ssh ─ProxyCommand─▶ msnw connect ════ QUIC tunnel ════▶ msnw export ──TCP──▶ sshd :22
+```mermaid
+flowchart LR
+    subgraph laptop
+        s["ssh user@home"] -->|ProxyCommand| mc["msnw connect home"]
+    end
+    subgraph home["home PC"]
+        ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
+    end
+    mc ==>|QUIC tunnel| ex
 ```
 
 Home PC:
@@ -138,9 +153,15 @@ Host home
 Without a ProxyCommand, keep a local port connected to port 22 at home
 instead; scp and rsync work the same way:
 
-```
-laptop                                                      home PC
-ssh -p 2222 localhost ──▶ msnw import -l 2222 ════ QUIC ════▶ msnw export ──TCP──▶ sshd :22
+```mermaid
+flowchart LR
+    subgraph laptop
+        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 home"]
+    end
+    subgraph home["home PC"]
+        ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
+    end
+    im ==>|QUIC tunnel| ex
 ```
 
 ```
@@ -152,10 +173,16 @@ ssh -p 2222 user@localhost
 
 Publish a dev server as it starts, and browse it from the laptop by name.
 
-```
-laptop                                                        home PC
-browser ─proxy─▶ msnw http-proxy :8080 ════ QUIC tunnel ════▶ msnw wrap-export ──TCP──▶ jekyll :4000
-                                                                                   └──▶ livereload :35729
+```mermaid
+flowchart LR
+    subgraph laptop
+        b["browser: http://blog/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
+    end
+    subgraph home["home PC"]
+        we["msnw wrap-export -n blog"] -->|TCP| j["jekyll :4000"]
+        we -->|TCP| lr["livereload :35729"]
+    end
+    hp ==>|QUIC tunnel| we
 ```
 
 Home PC:
@@ -186,9 +213,15 @@ and Chrome settings.
 
 The same with the directory you are in:
 
-```
-laptop                                                        home PC
-browser / curl ─▶ msnw http-proxy :8080 ════ QUIC tunnel ════▶ msnw wrap-export ──TCP──▶ python -m http.server :8000
+```mermaid
+flowchart LR
+    subgraph laptop
+        b["browser / curl: http://files/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
+    end
+    subgraph home["home PC"]
+        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
+    end
+    hp ==>|QUIC tunnel| we
 ```
 
 ```
