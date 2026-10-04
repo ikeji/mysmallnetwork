@@ -74,10 +74,14 @@ relay.ikeji.ma is the default. In every case:
 
 - Put the `msnw` binary on both machines (see [Install](#install)). It does
   not have to be on PATH.
-- Pick a link key and use the same string on both sides; below it is
-  `mylonglongsecretkey`. Only people who know it can connect, so make it long
-  and hard to guess (`msnw gen-key` prints a random one). It can also come
-  from the `MSNW_KEY` environment variable instead of `-key`.
+- Pick a link key and use the same string on both sides. Only people who
+  know it can connect, so make it long and hard to guess (`msnw gen-key`
+  prints a random one). The examples assume it is in the environment on both
+  machines, so the commands do not repeat `-key`:
+
+  ```
+  export MSNW_KEY=mylonglongsecretkey
+  ```
 - The name after `-n` is anything you like. A different link key is a
   different namespace, so your `linuxbox` never collides with someone else's.
 - Once the exporter logs `registered "..."` it is ready. Leave it running.
@@ -98,13 +102,13 @@ flowchart LR
 linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n linuxbox -t 22
+msnw export -n linuxbox -t 22
 ```
 
 laptop:
 
 ```
-ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox
+ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox
 ```
 
 The host name `linuxbox` is only what ssh displays; the ProxyCommand makes the
@@ -114,7 +118,7 @@ uses the same entry):
 ```
 Host linuxbox
     User user
-    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey linuxbox
+    ProxyCommand /path/to/msnw connect linuxbox
 ```
 
 scp and rsync use the same entry: `scp file linuxbox:` just works.
@@ -134,7 +138,7 @@ flowchart LR
 ```
 
 ```
-msnw import -key mylonglongsecretkey -l 2222 linuxbox        # leave it running
+msnw import -l 2222 linuxbox        # leave it running
 ssh -p 2222 user@localhost
 ```
 
@@ -156,7 +160,7 @@ flowchart LR
 linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999
+msnw export -n linuxbox -t 22 -u 60001-60999
 ```
 
 `-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh. A range
@@ -165,7 +169,7 @@ lets you open any number of mosh sessions at once (each uses one port).
 laptop:
 
 ```
-msnw mosh -key mylonglongsecretkey user@linuxbox
+msnw mosh user@linuxbox
 ```
 
 Internally it starts `mosh-server` over ssh (with msnw itself as the
@@ -189,8 +193,8 @@ flowchart LR
 ```
 
 ```
-linuxbox> msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server
-laptop>   msnw http-proxy -key mylonglongsecretkey
+linuxbox> msnw wrap-export -n files -- python3 -m http.server
+laptop>   msnw http-proxy
 laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```
 
@@ -220,8 +224,8 @@ flowchart LR
 
 ```
 linuxbox> python3 -m http.server                                  # in one terminal
-linuxbox> msnw export -key mylonglongsecretkey -n files -t 8000   # in another
-laptop>   msnw import -key mylonglongsecretkey -l 8000 files
+linuxbox> msnw export -n files -t 8000   # in another
+laptop>   msnw import -l 8000 files
 laptop>   curl http://localhost:8000/
 ```
 
@@ -244,7 +248,7 @@ flowchart LR
 linuxbox:
 
 ```
-msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --livereload
+msnw wrap-export -n blog -- bundle exec jekyll serve --livereload
 ```
 
 `wrap-export` runs the command and publishes the ports it opens (both here);
@@ -254,7 +258,7 @@ stops exporting when the command exits.
 laptop:
 
 ```
-msnw http-proxy -key mylonglongsecretkey      # listens on 127.0.0.1:8080
+msnw http-proxy      # listens on 127.0.0.1:8080
 ```
 
 With the browser's proxy set as above, open `http://blog/`. Live reload works

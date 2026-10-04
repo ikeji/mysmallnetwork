@@ -69,9 +69,13 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
 サーバーを用意する必要はない(公開サーバー relay.ikeji.ma を既定で使う)。共通の準備:
 
 - 両方の PC に `msnw` バイナリを置く(「インストール」の節を参照)。PATH を通す必要はない。
-- リンクキーを決めて両方で同じ文字列を使う。以下では `mylonglongsecretkey`。これを
-  知っている人だけが繋がれるので、推測されにくい長いものにする(`msnw gen-key` で
-  ランダムに作れる)。`-key` の代わりに環境変数 `MSNW_KEY` でも渡せる。
+- リンクキーを決めて両方で同じ文字列を使う。これを知っている人だけが繋がれるので、
+  推測されにくい長いものにする(`msnw gen-key` でランダムに作れる)。使用例では
+  両方の PC でこれを環境変数に入れてある前提で、コマンドに `-key` を繰り返さない:
+
+  ```
+  export MSNW_KEY=mylonglongsecretkey
+  ```
 - `-n` の名前は好きに付けてよい。リンクキーが違えば別の名前空間なので、自分の `linuxbox` が
   他人の `linuxbox` と衝突することはない。
 - exporter のログに `registered "..."` と出れば準備完了。起動したままにしておく。
@@ -92,13 +96,13 @@ flowchart LR
 linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n linuxbox -t 22
+msnw export -n linuxbox -t 22
 ```
 
 laptop:
 
 ```
-ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox
+ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox
 ```
 
 ホスト名 `linuxbox` は ssh の表示用で、実際の経路は ProxyCommand が作る。`~/.ssh/config` に
@@ -107,7 +111,7 @@ ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey linuxbox' user@linuxb
 ```
 Host linuxbox
     User user
-    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey linuxbox
+    ProxyCommand /path/to/msnw connect linuxbox
 ```
 
 scp や rsync もこの設定をそのまま使う: `scp file linuxbox:` でよい。
@@ -126,7 +130,7 @@ flowchart LR
 ```
 
 ```
-msnw import -key mylonglongsecretkey -l 2222 linuxbox        # 起動したままにする
+msnw import -l 2222 linuxbox        # 起動したままにする
 ssh -p 2222 user@localhost
 ```
 
@@ -148,7 +152,7 @@ flowchart LR
 linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999
+msnw export -n linuxbox -t 22 -u 60001-60999
 ```
 
 `-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲。範囲にしておくと mosh
@@ -157,7 +161,7 @@ msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999
 laptop:
 
 ```
-msnw mosh -key mylonglongsecretkey user@linuxbox
+msnw mosh user@linuxbox
 ```
 
 内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を起動し、mosh の UDP を
@@ -181,8 +185,8 @@ flowchart LR
 ```
 
 ```
-linuxbox> msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server
-laptop>   msnw http-proxy -key mylonglongsecretkey
+linuxbox> msnw wrap-export -n files -- python3 -m http.server
+laptop>   msnw http-proxy
 laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```
 
@@ -211,8 +215,8 @@ flowchart LR
 
 ```
 linuxbox> python3 -m http.server                                  # 端末 1
-linuxbox> msnw export -key mylonglongsecretkey -n files -t 8000   # 端末 2
-laptop>   msnw import -key mylonglongsecretkey -l 8000 files
+linuxbox> msnw export -n files -t 8000   # 端末 2
+laptop>   msnw import -l 8000 files
 laptop>   curl http://localhost:8000/
 ```
 
@@ -235,7 +239,7 @@ flowchart LR
 linuxbox:
 
 ```
-msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --livereload
+msnw wrap-export -n blog -- bundle exec jekyll serve --livereload
 ```
 
 `wrap-export` はコマンドを実行し、そのコマンドが開いたポートを(ここでは 2 つとも)公開する。
@@ -244,7 +248,7 @@ msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --
 laptop:
 
 ```
-msnw http-proxy -key mylonglongsecretkey      # 127.0.0.1:8080 で待つ
+msnw http-proxy      # 127.0.0.1:8080 で待つ
 ```
 
 ブラウザのプロキシは上と同じ設定のまま `http://blog/` を開く。ライブリロードも動く:
