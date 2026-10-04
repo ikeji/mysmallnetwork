@@ -290,10 +290,10 @@ from `$MSNW_KEY`; the examples assume the environment variable and omit it.
 ### server
 
 ```
-msnw server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
+msnw server [-server-key S] [-listen :4433] [-relay :4434] [-identity server.key]
 ```
 
-Both UDP ports must be reachable from outside. With `-key` the private key is
+Both UDP ports must be reachable from outside. With `-identity` the private key is
 saved so the fingerprint stays the same across restarts; the
 `fingerprint: sha256:...` printed at startup can be pinned by exporter and
 importer with `-server-fp` (or `$MSNW_SERVER_FP`).
@@ -608,7 +608,7 @@ together with `mosh-client` and dropbear built with the NDK. See
 
 - The server certificate is not verified by default. Landing on a fake server
   leaks nothing (the peers just fail to connect), but to rule out disruption,
-  pin the server with `-key` on the server side and `-server-fp` on the nodes.
+  pin the server with `-identity` on the server side and `-server-fp` on the nodes.
 - On Linux, quic-go warns when the UDP receive buffer is small. For high
   throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
 - For debugging, `MSNW_FORCE_RELAY=1` makes the importer skip direct paths and

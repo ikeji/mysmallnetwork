@@ -276,10 +276,10 @@ exporter / importer は既定で公開サーバー `relay.ikeji.ma:4433`(サー�
 ### server
 
 ```
-msnw server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
+msnw server [-server-key S] [-listen :4433] [-relay :4434] [-identity server.key]
 ```
 
-UDP の 2 ポートを外から到達可能にしておく。`-key` を指定すると鍵を保存して
+UDP の 2 ポートを外から到達可能にしておく。`-identity` を指定すると鍵を保存して
 フィンガープリントが再起動をまたいで固定される。起動時に表示される
 `fingerprint: sha256:...` を exporter / importer の `-server-fp`(または
 `$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる。
@@ -493,7 +493,7 @@ exporter 側の拠点が移る場合(`ROAM_MODE=exporter`)の 3 回走る。実�
   名前のなりすましが可能なので、信用単位ごとに鍵を分ける。「この人はこのポートだけ」は
   鍵と exporter を分けて表現する。
 - server はハッシュを見られるので、名前が推測できて鍵が短いと総当たりできる。リンクキーは
-  `--gen-key` で生成したものを使う。
+  `msnw gen-key` で生成したものを使う。
 - server は増幅器・反射器にならないようにしてある。制御ポートは Retry で送信元を検証してから
   ハンドシェイクする(偽装した送信元には送った分より少ないバイトしか返らない)。リレーは
   hello に応答せず、紹介済みセッションの hello も制御接続で観測した IP からのものしか
@@ -558,7 +558,7 @@ dropbear を同梱している。[android/README.md](android/README.md) を参�
 ## 注意
 
 - 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
-  漏れるものは無いが、妨害を避けたいなら server を `-key` で鍵固定し `-server-fp` でピン留めする。
+  漏れるものは無いが、妨害を避けたいなら server を `-identity` で鍵固定し `-server-fp` でピン留めする。
 - Linux で UDP 受信バッファが小さいと quic-go が警告する。高スループットが要るなら
   `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
 - デバッグ用に `MSNW_FORCE_RELAY=1` で importer を直結せずリレーのみにできる。

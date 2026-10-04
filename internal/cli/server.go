@@ -20,7 +20,8 @@ func Server(args []string) {
 	listen := fs.String("listen", ":4433", "control listen address (UDP/QUIC)")
 	relay := fs.String("relay", ":4434", "relay listen address (UDP); must be reachable by nodes")
 	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key nodes must present (or $MSNW_SERVER_KEY); empty = open server")
-	key := fs.String("key", "", "path to persistent private key (created if missing); default: ephemeral")
+	key := fs.String("identity", "", "path to the server's persistent private key (created if missing); default: ephemeral")
+	fs.StringVar(key, "key", "", "deprecated alias for -identity")
 	fs.Parse(args)
 	if *serverKey == "" {
 		log.Print("no -server-key set: this is an open server (link keys still protect every tunnel)")
