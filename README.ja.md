@@ -186,6 +186,12 @@ laptop>   msnw http-proxy -key mylonglongsecretkey
 laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```
 
+`msnw http-proxy` は `127.0.0.1:8080` で待つ。ブラウザの HTTP プロキシをそこに向けて
+(`*.msnw` の名前だけプロキシに流すなら [examples/msnw.pac](examples/msnw.pac))
+`http://files/` を開く。Firefox / Chrome の設定は
+[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) を参照。
+ブラウザなしで手早く確認するなら `curl -x`。
+
 コマンドに `{port}` を書かなければ、msnw はコマンドが開いたポートを検出して公開する。
 `{port}` を書くと msnw が空きポートを選んで埋める: `-- python3 -m http.server {port}`。
 
@@ -241,11 +247,8 @@ laptop:
 msnw http-proxy -key mylonglongsecretkey      # 127.0.0.1:8080 で待つ
 ```
 
-ブラウザの HTTP プロキシを `127.0.0.1:8080` にして(`*.msnw` の名前だけプロキシに流すなら
-[examples/msnw.pac](examples/msnw.pac))`http://blog/` を開く。ライブリロードも動く:
+ブラウザのプロキシは上と同じ設定のまま `http://blog/` を開く。ライブリロードも動く:
 ページ内のスクリプトが読む `http://blog:35729/` も exporter が公開しているため。
-`curl -x http://127.0.0.1:8080 http://blog/` で手早く確認できる。Firefox / Chrome の設定は
-[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) を参照。
 
 ### 動作の見方
 

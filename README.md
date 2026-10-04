@@ -194,6 +194,12 @@ laptop>   msnw http-proxy -key mylonglongsecretkey
 laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```
 
+`msnw http-proxy` listens on `127.0.0.1:8080`. Point the browser's HTTP proxy
+there (or use [examples/msnw.pac](examples/msnw.pac) so only `*.msnw` names go
+through it) and open `http://files/`; see
+[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) for the
+Firefox and Chrome settings. `curl -x` is the quick check without a browser.
+
 Without `{port}` in the command, msnw watches the command and publishes the
 port it opens. With `{port}` msnw picks a free port and fills it in:
 `-- python3 -m http.server {port}`.
@@ -251,13 +257,9 @@ laptop:
 msnw http-proxy -key mylonglongsecretkey      # listens on 127.0.0.1:8080
 ```
 
-Point the browser's HTTP proxy at `127.0.0.1:8080` (or use
-[examples/msnw.pac](examples/msnw.pac) so only `*.msnw` names go through it)
-and open `http://blog/`. Live reload works too: the page's script loads
-`http://blog:35729/`, which the exporter also publishes. `curl -x
-http://127.0.0.1:8080 http://blog/` is a quick check. See
-[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) for Firefox
-and Chrome settings.
+With the browser's proxy set as above, open `http://blog/`. Live reload works
+too: the page's script loads `http://blog:35729/`, which the exporter also
+publishes.
 
 ### What to look for
 
