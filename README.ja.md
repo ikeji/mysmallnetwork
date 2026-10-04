@@ -18,6 +18,35 @@
    nc -l 1234
 ```
 
+## クイックスタート
+
+両方の PC で、[Releases](https://github.com/ikeji/mysmallnetwork/releases) から:
+
+```
+curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+```
+
+自宅 PC(sshd 側)。リンクキーは好きな文字列:
+
+```
+./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
+```
+
+ノート PC:
+
+```
+./msnw mosh -key mylonglongsecretkey user@home
+ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home
+```
+
+Web サーバーを共有するなら:
+
+```
+./msnw wrap-export -key mylonglongsecretkey -n web -- python3 -m http.server   # ファイルのある側
+./msnw http-proxy -key mylonglongsecretkey                                     # ブラウザのある側
+curl -x http://127.0.0.1:8080 http://web/                                      # またはブラウザのプロキシに設定
+```
+
 ## インストール
 
 [Releases](https://github.com/ikeji/mysmallnetwork/releases) から自分の OS / CPU 向けの
@@ -44,54 +73,68 @@ Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENA
 cgo 付きでビルドすると libc を動的リンクし、古い glibc のホストで
 `GLIBC_2.34' not found` のようなエラーになる。
 
-## クイックガイド: 手元の ssh / mosh を共有する
+## 使用例
 
-自宅の PC(sshd が動いている)に、外出先のノート PC から ssh や mosh したい場合。
-どちらも NAT の奥にいてよく、サーバーを用意する必要はない(公開サーバー
-relay.ikeji.ma を既定で使う)。
+どの例も、外出先のノート PC から自宅の PC に届かせる。どちらも NAT の奥にいてよく、
+サーバーを用意する必要はない(公開サーバー relay.ikeji.ma を既定で使う)。共通の準備:
 
-**1. 両方の PC にバイナリを置く**
+- 両方の PC に `msnw` バイナリを置く(「インストール」の節を参照)。PATH を通す必要はない。
+- リンクキーを決めて両方で同じ文字列を使う。以下では `mylonglongsecretkey`。これを
+  知っている人だけが繋がれるので、推測されにくい長いものにする(`msnw gen-key` で
+  ランダムに作れる)。`-key` の代わりに環境変数 `MSNW_KEY` でも渡せる。
+- `-n` の名前は好きに付けてよい。リンクキーが違えば別の名前空間なので、自分の `home` が
+  他人の `home` と衝突することはない。
+- exporter のログに `registered "..."` と出れば準備完了。起動したままにしておく。
 
-[Releases](https://github.com/ikeji/mysmallnetwork/releases) から、それぞれの PC の
-OS / CPU 向けのアーカイブを落として展開する(「インストール」の節を参照)。
-`msnw` 1 ファイルだけでよく、PATH を通す必要もない。ソースから `make` で作ってもよい。
+### mosh
 
-**2. リンクキーを決める**
+```
+ノート PC                                                     自宅 PC
+mosh-client ──UDP──▶ msnw mosh ════ QUIC トンネル ════▶ msnw export ──UDP──▶ mosh-server :60001
+    ssh ─ProxyCommand─▶ (msnw connect) ═══════════════▶     -t 22    ──TCP──▶ sshd :22 (mosh-server を起動)
+```
 
-両方の PC で同じ文字列を使う。以下では `mylonglongsecretkey` とする。
-これを知っている人だけが繋がれるので、推測されにくい長いものにする
-(`msnw gen-key` でランダムに作ってもよい)。
-
-**3. 自宅 PC(sshd 側)で公開する**
+自宅 PC:
 
 ```
 msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
 ```
 
-`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲(ssh だけなら `-u` は不要)。
-範囲にしておくと mosh セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
-`home` は好きな名前でよく、リンクキーが違えば他人の `home` とは衝突しない。
-ログに `registered "home"` と出れば準備完了。起動したままにしておく。
+`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲。範囲にしておくと mosh
+セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
 
-**4a. ノート PC から mosh する**
+ノート PC:
 
 ```
 msnw mosh -key mylonglongsecretkey user@home
 ```
 
-これだけでよい。内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を
-起動し、mosh の UDP をトンネルで転送して `mosh-client` を起動する。
-ノート PC には `ssh` と `mosh-client` が、自宅 PC には `mosh-server` が要る。
-ポート範囲を変えるなら `-p 60001:60010` のように指定し、exporter 側の `-u` も合わせる。
+内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を起動し、mosh の UDP を
+トンネルで転送して `mosh-client` を起動する。ノート PC には `ssh` と `mosh-client` が、
+自宅 PC には `mosh-server` が要る。ポート範囲を変えるなら `-p 60001:60010` のように指定し、
+exporter 側の `-u` も合わせる。
 
-**4b. ノート PC から ssh する**
+### ssh
+
+```
+ノート PC                                                     自宅 PC
+ssh ─ProxyCommand─▶ msnw connect ════ QUIC トンネル ════▶ msnw export ──TCP──▶ sshd :22
+```
+
+自宅 PC:
+
+```
+msnw export -key mylonglongsecretkey -n home -t 22
+```
+
+ノート PC:
 
 ```
 ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey home' user@home
 ```
 
-ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。
-`~/.ssh/config` に書いておくと `ssh home` だけで済む(`msnw mosh` もこの設定を使う):
+ホスト名 `home` は ssh の表示用で、実際の経路は ProxyCommand が作る。`~/.ssh/config` に
+書いておくと `ssh home` だけで済む(`msnw mosh` もこの設定を使う):
 
 ```
 Host home
@@ -99,19 +142,69 @@ Host home
     ProxyCommand /path/to/msnw connect -key mylonglongsecretkey home
 ```
 
-キーは `MSNW_KEY` 環境変数でも渡せるので、コマンドラインに出したくなければ
-`export MSNW_KEY=mylonglongsecretkey` しておいて `-key` を省く。
+ProxyCommand を使わず、ノート PC のローカルポートを自宅の 22 番に繋いでおく方法もある。
+scp や rsync も同じ要領:
 
-**別解: ローカルポートに出す**
-
-ProxyCommand を使わず、ノート PC の 2222 番を自宅の 22 番に繋いでおく方法:
+```
+ノート PC                                                     自宅 PC
+ssh -p 2222 localhost ──▶ msnw import -l 2222 ════ QUIC ════▶ msnw export ──TCP──▶ sshd :22
+```
 
 ```
 msnw import -key mylonglongsecretkey -l 2222 home        # 起動したままにする
-ssh -p 2222 user@localhost                             # scp や rsync も同じ要領
+ssh -p 2222 user@localhost
 ```
 
-**動作の見方**
+### 開発サーバー(jekyll)
+
+開発サーバーを起動と同時に公開し、ノート PC のブラウザから名前で開く。
+
+```
+ノート PC                                                       自宅 PC
+ブラウザ ─proxy─▶ msnw http-proxy :8080 ════ QUIC トンネル ════▶ msnw wrap-export ──TCP──▶ jekyll :4000
+                                                                                     └──▶ livereload :35729
+```
+
+自宅 PC:
+
+```
+msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --livereload
+```
+
+`wrap-export` はコマンドを実行し、そのコマンドが開いたポートを(ここでは 2 つとも)公開する。
+いちばん小さい 4000 が既定。ビルドにかかる時間はそのまま待ち、コマンドが終われば公開も終わる。
+
+ノート PC:
+
+```
+msnw http-proxy -key mylonglongsecretkey      # 127.0.0.1:8080 で待つ
+```
+
+ブラウザの HTTP プロキシを `127.0.0.1:8080` にして(`*.msnw` の名前だけプロキシに流すなら
+[examples/msnw.pac](examples/msnw.pac))`http://blog/` を開く。ライブリロードも動く:
+ページ内のスクリプトが読む `http://blog:35729/` も exporter が公開しているため。
+`curl -x http://127.0.0.1:8080 http://blog/` で手早く確認できる。Firefox / Chrome の設定は
+[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) を参照。
+
+### ディレクトリ(python -m http.server)
+
+いまいるディレクトリを同じ要領で:
+
+```
+ノート PC                                                       自宅 PC
+ブラウザ / curl ─▶ msnw http-proxy :8080 ════ QUIC トンネル ════▶ msnw wrap-export ──TCP──▶ python -m http.server :8000
+```
+
+```
+msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # 自宅 PC
+msnw http-proxy -key mylonglongsecretkey                                              # ノート PC
+curl -x http://127.0.0.1:8080 http://files/                                           # ノート PC
+```
+
+コマンドに `{port}` を書くと msnw が空きポートを選んで埋める:
+`-- python3 -m http.server {port}`。
+
+### 動作の見方
 
 - 初回接続時に client のログに `via direct ...` か `via relay ...` と出る。`direct` なら
   NAT 越えの直結、`relay` ならサーバー経由(暗号化は変わらない)。

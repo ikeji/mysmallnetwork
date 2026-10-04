@@ -19,6 +19,35 @@ from behind NAT.
    nc -l 1234
 ```
 
+## Quick start
+
+Both machines, from [Releases](https://github.com/ikeji/mysmallnetwork/releases):
+
+```
+curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+```
+
+Home PC (sshd side), with a link key of your choice:
+
+```
+./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
+```
+
+Laptop:
+
+```
+./msnw mosh -key mylonglongsecretkey user@home
+ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home
+```
+
+Share a web server instead:
+
+```
+./msnw wrap-export -key mylonglongsecretkey -n web -- python3 -m http.server   # where the files are
+./msnw http-proxy -key mylonglongsecretkey                                     # where the browser is
+curl -x http://127.0.0.1:8080 http://web/                                      # or set the browser's proxy
+```
+
 ## Install
 
 Download the archive for your OS / CPU from
@@ -47,50 +76,64 @@ Needs Go 1.26 or newer (a quic-go requirement). If you run `go build` yourself,
 set `CGO_ENABLED=0`: a cgo build links libc dynamically and fails on hosts
 with an older glibc (`GLIBC_2.34' not found`).
 
-## Quick guide: share your ssh / mosh
+## Examples
 
-You want to ssh or mosh from a laptop on the road into a PC at home that runs
-sshd. Both can sit behind NAT, and you do not need to run a server: the public
-server relay.ikeji.ma is the default.
+Each example reaches a PC at home from a laptop on the road. Both can sit
+behind NAT, and you do not need to run a server: the public server
+relay.ikeji.ma is the default. In every case:
 
-**1. Put the binary on both machines**
+- Put the `msnw` binary on both machines (see [Install](#install)). It does
+  not have to be on PATH.
+- Pick a link key and use the same string on both sides; below it is
+  `mylonglongsecretkey`. Only people who know it can connect, so make it long
+  and hard to guess (`msnw gen-key` prints a random one). It can also come
+  from the `MSNW_KEY` environment variable instead of `-key`.
+- The name after `-n` is anything you like. A different link key is a
+  different namespace, so your `home` never collides with someone else's.
+- Once the exporter logs `registered "..."` it is ready. Leave it running.
 
-Download the archive for each machine's OS / CPU from
-[Releases](https://github.com/ikeji/mysmallnetwork/releases) and unpack it
-(see [Install](#install)). The single `msnw` file is all you need; it does not
-have to be on PATH. Building from source with `make` works too.
+### mosh
 
-**2. Pick a link key**
+```
+laptop                                                      home PC
+mosh-client ──UDP──▶ msnw mosh ════ QUIC tunnel ════▶ msnw export ──UDP──▶ mosh-server :60001
+    ssh ─ProxyCommand─▶ (msnw connect) ═════════════▶      -t 22   ──TCP──▶ sshd :22  (starts mosh-server)
+```
 
-Use the same string on both machines; below it is `mylonglongsecretkey`. Only
-people who know it can connect, so make it long and hard to guess
-(`msnw gen-key` prints a random one).
-
-**3. Publish on the home PC (the sshd side)**
+Home PC:
 
 ```
 msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
 ```
 
-`-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh (drop `-u` if
-you only need ssh). A range lets you open any number of mosh sessions at once
-(each uses one port). `home` is any name you like; a different link key means a
-different namespace, so it never collides with someone else's `home`. Once the
-log says `registered "home"` it is ready. Leave it running.
+`-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh. A range
+lets you open any number of mosh sessions at once (each uses one port).
 
-**4a. mosh from the laptop**
+Laptop:
 
 ```
 msnw mosh -key mylonglongsecretkey user@home
 ```
 
-That is all. Internally it starts `mosh-server` over ssh (with msnw itself as
-the ProxyCommand), forwards mosh's UDP through the tunnel and runs
-`mosh-client`. The laptop needs `ssh` and `mosh-client`, the home PC needs
-`mosh-server`. To use another port range pass `-p 60001:60010` and match the
-exporter's `-u`.
+Internally it starts `mosh-server` over ssh (with msnw itself as the
+ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-client`.
+The laptop needs `ssh` and `mosh-client`, the home PC needs `mosh-server`. To
+use another port range pass `-p 60001:60010` and match the exporter's `-u`.
 
-**4b. ssh from the laptop**
+### ssh
+
+```
+laptop                                                      home PC
+ssh ─ProxyCommand─▶ msnw connect ════ QUIC tunnel ════▶ msnw export ──TCP──▶ sshd :22
+```
+
+Home PC:
+
+```
+msnw export -key mylonglongsecretkey -n home -t 22
+```
+
+Laptop:
 
 ```
 ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey home' user@home
@@ -106,21 +149,72 @@ Host home
     ProxyCommand /path/to/msnw connect -key mylonglongsecretkey home
 ```
 
-The key can also come from the `MSNW_KEY` environment variable, so if you do
-not want it on a command line, `export MSNW_KEY=mylonglongsecretkey` and drop
-`-key`.
+Without a ProxyCommand, keep a local port connected to port 22 at home
+instead; scp and rsync work the same way:
 
-**Alternative: a local port**
-
-Without a ProxyCommand, keep the laptop's port 2222 connected to port 22 at
-home:
+```
+laptop                                                      home PC
+ssh -p 2222 localhost ──▶ msnw import -l 2222 ════ QUIC ════▶ msnw export ──TCP──▶ sshd :22
+```
 
 ```
 msnw import -key mylonglongsecretkey -l 2222 home        # leave it running
-ssh -p 2222 user@localhost                             # scp and rsync work the same way
+ssh -p 2222 user@localhost
 ```
 
-**What to look for**
+### A dev server (jekyll)
+
+Publish a dev server as it starts, and browse it from the laptop by name.
+
+```
+laptop                                                        home PC
+browser ─proxy─▶ msnw http-proxy :8080 ════ QUIC tunnel ════▶ msnw wrap-export ──TCP──▶ jekyll :4000
+                                                                                   └──▶ livereload :35729
+```
+
+Home PC:
+
+```
+msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --livereload
+```
+
+`wrap-export` runs the command and publishes the ports it opens (both here);
+the lowest one, 4000, is the default. It waits as long as the build takes and
+stops exporting when the command exits.
+
+Laptop:
+
+```
+msnw http-proxy -key mylonglongsecretkey      # listens on 127.0.0.1:8080
+```
+
+Point the browser's HTTP proxy at `127.0.0.1:8080` (or use
+[examples/msnw.pac](examples/msnw.pac) so only `*.msnw` names go through it)
+and open `http://blog/`. Live reload works too: the page's script loads
+`http://blog:35729/`, which the exporter also publishes. `curl -x
+http://127.0.0.1:8080 http://blog/` is a quick check. See
+[socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) for Firefox
+and Chrome settings.
+
+### A directory (python -m http.server)
+
+The same with the directory you are in:
+
+```
+laptop                                                        home PC
+browser / curl ─▶ msnw http-proxy :8080 ════ QUIC tunnel ════▶ msnw wrap-export ──TCP──▶ python -m http.server :8000
+```
+
+```
+msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # home PC
+msnw http-proxy -key mylonglongsecretkey                                              # laptop
+curl -x http://127.0.0.1:8080 http://files/                                           # laptop
+```
+
+Add `{port}` to the command and msnw picks a free port and fills it in:
+`-- python3 -m http.server {port}`.
+
+### What to look for
 
 - On the first connection the client logs `via direct ...` or `via relay ...`.
   `direct` means the NAT traversal worked; `relay` means the server is
