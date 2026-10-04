@@ -24,9 +24,9 @@
 linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
 laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # OS / CPU に合わせて選ぶ
 
-linuxbox> ./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999     # sshd(と mosh 用 UDP)を "home" の名前で公開。キーも名前も好きに
-laptop>   ./msnw mosh -key mylonglongsecretkey user@home                           # mosh で入る
-laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home   # ssh なら
+linuxbox> ./msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999     # sshd(と mosh 用 UDP)を "linuxbox" の名前で公開。キーも名前も好きに
+laptop>   ./msnw mosh -key mylonglongsecretkey user@linuxbox                           # mosh で入る
+laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox   # ssh なら
 
 linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # コマンドを実行し、開いたポートを公開
 laptop>   ./msnw http-proxy -key mylonglongsecretkey                               # 127.0.0.1:8080 の HTTP プロキシ。ブラウザに設定する
