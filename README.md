@@ -143,7 +143,7 @@ ssh -p 2222 user@localhost
 ```mermaid
 flowchart LR
     subgraph laptop
-        mc["mosh-importer"] -->|UDP| mm["msnw mosh"]
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
     end
     subgraph linuxbox
         ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
@@ -169,8 +169,8 @@ msnw mosh -key mylonglongsecretkey user@linuxbox
 ```
 
 Internally it starts `mosh-server` over ssh (with msnw itself as the
-ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-importer`.
-The laptop needs `ssh` and `mosh-importer`, the linuxbox PC needs `mosh-server`. To
+ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-client`.
+The laptop needs `ssh` and `mosh-client`, linuxbox needs `mosh-server`. To
 use another port range pass `-p 60001:60010` and match the exporter's `-u`.
 
 ### A directory (python -m http.server)
@@ -284,6 +284,9 @@ Exporter and importer default to the public server `relay.ikeji.ma:4433` (no
 server key), so a downloaded binary plus a link key is all you need. To use
 your own server, point at it with `-s host:port` (or `$MSNW_SERVER`).
 
+Every command below except `server` takes the link key as `-key LINKKEY` or
+from `$MSNW_KEY`; the examples assume the environment variable and omit it.
+
 ### server
 
 ```
@@ -298,10 +301,10 @@ importer with `-server-fp` (or `$MSNW_SERVER_FP`).
 ### export
 
 ```
-msnw export -key LINKKEY -n hogehoge -t 1234       # publish localhost:1234 (TCP) as hogehoge
-msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # several targets; the first is the default
-msnw export -n home -t 22 -u 60001-60999           # -t is TCP, -u is UDP; ranges allowed (mosh)
-msnw export -n exit --all                          # forward to any host:port (exit-node style)
+msnw export -n hogehoge -t 1234                     # publish localhost:1234 (TCP) as hogehoge
+msnw export -n hogehoge -t 1234 -t 8080 -t db:5432  # several targets; the first is the default
+msnw export -n home -t 22 -u 60001-60999            # -t is TCP, -u is UDP; ranges allowed (mosh)
+msnw export -n exit --all                           # forward to any host:port (exit-node style)
 ```
 
 `-t` (TCP) and `-u` (UDP) take `port` (meaning localhost:port), `host:port`, or
@@ -313,9 +316,9 @@ protocols; combined with `-t`, the first `-t` is the default target.
 Run a command and publish the port it listens on, for as long as it runs:
 
 ```
-msnw wrap-export -key K -n foo -- python -m http.server        # then http://foo/ from a importer
-msnw wrap-export -key K -n foo -- python -m http.server {port} # msnw picks a free port and fills it in
-msnw wrap-export -key K -n foo -p 3000 -- npm start            # the port is known
+msnw wrap-export -n foo -- python -m http.server         # then http://foo/ from the laptop
+msnw wrap-export -n foo -- python -m http.server {port}  # msnw picks a free port and fills it in
+msnw wrap-export -n foo -p 3000 -- npm start             # the port is known
 ```
 
 The port is taken from `-p`, or from a `{port}` placeholder in the command
@@ -330,24 +333,23 @@ command exits, and Ctrl-C stops both.
 ### import, connect
 
 ```
-msnw connect -key LINKKEY hogehoge      # pipe stdin/stdout (nc style, ssh ProxyCommand)
-                                        # below, -key is assumed to be in $MSNW_KEY
-msnw connect hogehoge:8080              # another port on the exporter
-msnw connect exit:example.com:80        # any host through an --all exporter
+msnw connect hogehoge                    # pipe stdin/stdout (nc style, ssh ProxyCommand)
+msnw connect hogehoge:8080               # another port on the exporter
+msnw connect exit:example.com:80         # any host through an --all exporter
 
-msnw import -l hogehoge                 # listen on 127.0.0.1 on the exporter's default port number
-msnw import -l 5000 hogehoge            # 127.0.0.1:5000 -> hogehoge's default target
-msnw import -l :5000 hogehoge:8080      # listen on all interfaces
-msnw import -l udp:60001 hogehoge:60001 # forward UDP (one flow per source address)
+msnw import -l hogehoge                  # listen on 127.0.0.1 on the exporter's default port number
+msnw import -l 5000 hogehoge             # 127.0.0.1:5000 -> hogehoge's default target
+msnw import -l :5000 hogehoge:8080       # listen on all interfaces
+msnw import -l udp:60001 hogehoge:60001  # forward UDP (one flow per source address)
 ```
 
 ### socks5-proxy, http-proxy, proxy
 
 ```
-msnw socks5-proxy                       # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
-msnw http-proxy                         # HTTP proxy on 127.0.0.1:8080 with the same rules (CONNECT + plain http)
-msnw proxy                              # both in one process (--socks5 addr / --http addr to change or "" to disable)
-msnw socks5-proxy -n exit :1080         # unknown hosts go out through exit
+msnw socks5-proxy                # SOCKS5 on 127.0.0.1:1080; msnw names go through the tunnel, the rest directly
+msnw http-proxy                  # HTTP proxy on 127.0.0.1:8080 with the same rules (CONNECT + plain http)
+msnw proxy                       # both in one process (--socks5 addr / --http addr to change or "" to disable)
+msnw socks5-proxy -n exit :1080  # unknown hosts go out through exit
 ```
 
 How proxy destinations (SOCKS5 and HTTP proxy alike) are interpreted:
@@ -380,8 +382,8 @@ Publish it on the machine that runs it, and start the proxy on the machine
 with the browser:
 
 ```
-msnw export -key K -n mypc -t 8765      # the service runs on this machine
-msnw socks5-proxy -key K                # on the machine with the browser
+msnw export -n mypc -t 8765  # the service runs on this machine
+msnw socks5-proxy            # on the machine with the browser
 ```
 
 Then point the browser at `http://mypc/` (or `http://mypc.msnw/`). Because
@@ -426,13 +428,13 @@ ssh -o ProxyCommand='msnw connect hogehoge:22' user@anything
 Example: mosh (`msnw mosh`)
 
 ```
-msnw export -key K -n home -t 22 -u 60001-60999   # sshd as the default target, plus mosh's UDP range
-msnw mosh -key K user@home                      # -p changes the port range (default 60001:60999)
+msnw export -n home -t 22 -u 60001-60999  # sshd as the default target, plus mosh's UDP range
+msnw mosh user@home                       # -p changes the port range (default 60001:60999)
 ```
 
 `msnw mosh` starts `mosh-server` over ssh (passing its own executable as the
 ProxyCommand) bound to 127.0.0.1 only, forwards a local UDP port to the same
-port on the exporter side inside the same process, then runs `mosh-importer`
+port on the exporter side inside the same process, then runs `mosh-client`
 against 127.0.0.1. Extra ssh options go in `-ssh "..."` or `MSNW_MOSH_SSH`. The
 link key reaches the child process through the environment, not the command
 line. Flags may follow the host (`msnw mosh user@home -v`). While mosh owns
@@ -599,7 +601,7 @@ Findings:
 
 `android/` holds an app with a browser tab (through the HTTP proxy) and a
 terminal tab running real mosh to a published host; msnw is bundled unchanged
-together with `mosh-importer` and dropbear built with the NDK. See
+together with `mosh-client` and dropbear built with the NDK. See
 [android/README.md](android/README.md).
 
 ## Notes

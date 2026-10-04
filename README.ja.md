@@ -135,7 +135,7 @@ ssh -p 2222 user@localhost
 ```mermaid
 flowchart LR
     subgraph laptop
-        mc["mosh-importer"] -->|UDP| mm["msnw mosh"]
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
     end
     subgraph linuxbox
         ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
@@ -161,7 +161,7 @@ msnw mosh -key mylonglongsecretkey user@linuxbox
 ```
 
 内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を起動し、mosh の UDP を
-トンネルで転送して `mosh-importer` を起動する。ノート PC には `ssh` と `mosh-importer` が、
+トンネルで転送して `mosh-client` を起動する。ノート PC には `ssh` と `mosh-client` が、
 自宅 PC には `mosh-server` が要る。ポート範囲を変えるなら `-p 60001:60010` のように指定し、
 exporter 側の `-u` も合わせる。
 
@@ -270,6 +270,9 @@ exporter / importer は既定で公開サーバー `relay.ikeji.ma:4433`(サー�
 バイナリを落としてリンクキーを決めればすぐ使える。自前のサーバーを使うときは
 `-s host:port`(または `$MSNW_SERVER`)で指す。
 
+以下のコマンドは `server` 以外すべてリンクキーを `-key LINKKEY` か `$MSNW_KEY` で受け取る。
+例では環境変数にあるものとして省略する。
+
 ### server
 
 ```
@@ -284,10 +287,10 @@ UDP の 2 ポートを外から到達可能にしておく。`-key` を指定す
 ### exporter
 
 ```
-msnw export -key LINKKEY -n hogehoge -t 1234       # localhost:1234 (TCP) を hogehoge として公開
-msnw export -n hogehoge -t 1234 -t 8080 -t db:5432 # 複数ターゲット。最初のものが既定
-msnw export -n home -t 22 -u 60001-60999           # -t は TCP、-u は UDP。範囲も書ける(mosh 用)
-msnw export -n exit --all                          # 任意の host:port へ中継(exit node 的用途)
+msnw export -n hogehoge -t 1234                     # localhost:1234 (TCP) を hogehoge として公開
+msnw export -n hogehoge -t 1234 -t 8080 -t db:5432  # 複数ターゲット。最初のものが既定
+msnw export -n home -t 22 -u 60001-60999            # -t は TCP、-u は UDP。範囲も書ける(mosh 用)
+msnw export -n exit --all                           # 任意の host:port へ中継(exit node 的用途)
 ```
 
 `-t`(TCP)と `-u`(UDP)はそれぞれ `port`(= localhost:port)、`host:port`、または
@@ -299,9 +302,9 @@ msnw export -n exit --all                          # 任意の host:port へ中�
 コマンドを起動し、それが待ち受けるポートを、コマンドが動いている間だけ公開する:
 
 ```
-msnw wrap-export -key K -n foo -- python -m http.server        # importer から http://foo/
-msnw wrap-export -key K -n foo -- python -m http.server {port} # msnw が空きポートを選んで埋める
-msnw wrap-export -key K -n foo -p 3000 -- npm start            # ポートが分かっている場合
+msnw wrap-export -n foo -- python -m http.server         # laptop から http://foo/
+msnw wrap-export -n foo -- python -m http.server {port}  # msnw が空きポートを選んで埋める
+msnw wrap-export -n foo -p 3000 -- npm start             # ポートが分かっている場合
 ```
 
 ポートは `-p` か、コマンド中の `{port}` から決まる(`-p 0` か `-p` 無しなら空きポート)。
@@ -314,24 +317,23 @@ TCP で待ち受けを始めるのを `/proc` で検出して、見つかった�
 ### import, connect
 
 ```
-msnw connect -key LINKKEY hogehoge      # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
-                                        # 以下 -key は $MSNW_KEY にあるものとして省略
-msnw connect hogehoge:8080              # exporter 側の別ポートを指定
-msnw connect exit:example.com:80        # --all な exporter 経由で任意ホストへ
+msnw connect hogehoge                    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
+msnw connect hogehoge:8080               # exporter 側の別ポートを指定
+msnw connect exit:example.com:80         # --all な exporter 経由で任意ホストへ
 
-msnw import -l hogehoge                 # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
-msnw import -l 5000 hogehoge            # 127.0.0.1:5000 → hogehoge の既定ターゲット
-msnw import -l :5000 hogehoge:8080      # 全インターフェイスで listen
-msnw import -l udp:60001 hogehoge:60001 # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw import -l hogehoge                  # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
+msnw import -l 5000 hogehoge             # 127.0.0.1:5000 → hogehoge の既定ターゲット
+msnw import -l :5000 hogehoge:8080       # 全インターフェイスで listen
+msnw import -l udp:60001 hogehoge:60001  # UDP を転送(送信元アドレスごとに 1 フロー)
 ```
 
 ### socks5-proxy, http-proxy, proxy
 
 ```
-msnw socks5-proxy                       # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
-msnw http-proxy                         # 127.0.0.1:8080 で HTTP プロキシ。同じ規則(CONNECT と平文 http)
-msnw proxy                              # 両方を 1 プロセスで(--socks5 addr / --http addr で変更、"" で無効)
-msnw socks5-proxy -n exit :1080         # 不明なホストは exit 経由で外へ
+msnw socks5-proxy                # 127.0.0.1:1080 で SOCKS5。msnw の名前はトンネル、それ以外は手元から直接
+msnw http-proxy                  # 127.0.0.1:8080 で HTTP プロキシ。同じ規則(CONNECT と平文 http)
+msnw proxy                       # 両方を 1 プロセスで(--socks5 addr / --http addr で変更、"" で無効)
+msnw socks5-proxy -n exit :1080  # 不明なホストは exit 経由で外へ
 ```
 
 プロキシ(SOCKS5 と HTTP プロキシで共通)での宛先ホストの解釈:
@@ -362,8 +364,8 @@ msnw の名前以外は手元から直接繋ぐので、ブラウザに常時設
 サービスが動いている PC で公開し、ブラウザのある PC でプロキシを起動する:
 
 ```
-msnw export -key K -n mypc -t 8765      # サービスが動いている PC
-msnw socks5-proxy -key K                # ブラウザのある PC
+msnw export -n mypc -t 8765  # サービスが動いている PC
+msnw socks5-proxy            # ブラウザのある PC
 ```
 
 あとはブラウザで `http://mypc/`(または `http://mypc.msnw/`)を開く。`mypc` は
@@ -403,13 +405,13 @@ ssh -o ProxyCommand='msnw connect hogehoge:22' user@anything
 例: mosh(`msnw mosh`)
 
 ```
-msnw export -key K -n home -t 22 -u 60001-60999   # sshd を既定に、mosh 用 UDP ポート範囲も許可
-msnw mosh -key K user@home                      # -p で mosh のポート範囲を変えられる(既定 60001:60999)
+msnw export -n home -t 22 -u 60001-60999  # sshd を既定に、mosh 用 UDP ポート範囲も許可
+msnw mosh user@home                       # -p で mosh のポート範囲を変えられる(既定 60001:60999)
 ```
 
 `msnw mosh` は ssh(ProxyCommand に自分自身のパスを渡す)で `mosh-server` を
 127.0.0.1 限定で起動し、ローカル UDP ポートを exporter 側の同じポートへ同一プロセス内で
-転送してから `mosh-importer` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
+転送してから `mosh-client` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
 `-ssh "..."` か `MSNW_MOSH_SSH` を使う。リンクキーは環境変数で子プロセスに渡すので
 コマンドラインに出ない。フラグはホスト名の後にも書ける(`msnw mosh user@home -v`)。
 mosh が端末を占有している間はログが見えないので、`-log FILE`(または `MSNW_LOG`)で
@@ -550,7 +552,7 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # WAN 側 INPUT を落とさない NAT
 ## Android アプリ
 
 `android/` に、ブラウザタブ(HTTP プロキシ経由)と、公開したホストへ本物の mosh で繋ぐ
-端末タブを持つアプリがある。msnw は無改造のまま、NDK でビルドした `mosh-importer` と
+端末タブを持つアプリがある。msnw は無改造のまま、NDK でビルドした `mosh-client` と
 dropbear を同梱している。[android/README.md](android/README.md) を参照。
 
 ## 注意
