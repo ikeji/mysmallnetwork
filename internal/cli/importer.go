@@ -85,7 +85,7 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	if err != nil {
 		return nil, 0, fmt.Errorf("%s: %w", name, err)
 	}
-	log.Printf("connected to %q via %s%s", name, via, buildinfo.Mismatch("exporter", ver, "client"))
+	log.Printf("connected to %q via %s%s", name, via, buildinfo.Mismatch("exporter", ver, "importer"))
 	e.conn, e.defaultPort, e.peerVersion = conn, port, ver
 	return conn, port, nil
 }
@@ -102,7 +102,7 @@ func (p *pool) annotate(name string, err error) error {
 	e.mu.Lock()
 	ver := e.peerVersion
 	e.mu.Unlock()
-	if note := buildinfo.Mismatch("exporter", ver, "client"); note != "" {
+	if note := buildinfo.Mismatch("exporter", ver, "importer"); note != "" {
 		return fmt.Errorf("%w%s", err, note)
 	}
 	return err

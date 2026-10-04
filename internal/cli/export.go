@@ -130,9 +130,9 @@ func Export(args []string) {
 	var tcpTargets, udpTargets multiFlag
 	fs.Var(&tcpTargets, "t", "TCP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
 	fs.Var(&udpTargets, "u", "UDP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
-	all := fs.Bool("all", false, "let clients connect to any host:port (TCP and UDP) through this exporter")
+	all := fs.Bool("all", false, "let importers connect to any host:port (TCP and UDP) through this exporter")
 	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
-	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with clients (or $MSNW_KEY); required")
+	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with importers (or $MSNW_KEY); required")
 	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
 	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
@@ -202,7 +202,7 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 	go acceptLoop(ctx, ln, pol, o.linkKey, defaultPort, sessions)
 
 	onIncoming := func(m *proto.Message) {
-		log.Printf("incoming client %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
+		log.Printf("incoming importer %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
 		allow.Add(m.PeerFingerprint)
 		go node.Punch(ctx, m.Session, m.Candidates, 10*time.Second)
 		go func() {
@@ -266,7 +266,7 @@ func servePeer(ctx context.Context, conn *quic.Conn, pol *policy, linkKey string
 		log.Printf("peer %s rejected: %v", conn.RemoteAddr(), err)
 		return
 	}
-	log.Printf("peer connected from %s%s", conn.RemoteAddr(), buildinfo.Mismatch("client", clientVersion, "exporter"))
+	log.Printf("peer connected from %s%s", conn.RemoteAddr(), buildinfo.Mismatch("importer", clientVersion, "exporter"))
 	mux := tunnel.NewUDPMux(conn)
 	for {
 		st, err := conn.AcceptStream(ctx)

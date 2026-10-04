@@ -27,7 +27,7 @@ func String() string {
 	return fmt.Sprintf("msnw %s (%s, %s/%s)", Version(), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 }
 
-// Mismatch returns a note like " (exporter v0.1.4, this client v0.1.5)" when
+// Mismatch returns a note like " (exporter v0.1.4, this importer v0.1.5)" when
 // the peer's version differs from ours, or "" when it matches. An empty peer
 // version (an older build that did not send one) shows as "unknown".
 func Mismatch(peerRole, peerVersion, ownRole string) string {

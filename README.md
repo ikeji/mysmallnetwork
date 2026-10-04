@@ -8,15 +8,17 @@ from behind NAT.
 ```mermaid
 flowchart TB
     srv["msnw server<br/>QUIC control :4433 / UDP relay :4434<br/>introduction, NAT traversal help, relay of last resort"]
-    subgraph home["home PC"]
-        ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
-    end
     subgraph laptop
         im["msnw import -l 1234 hogehoge"] --- app["nc localhost 1234"]
     end
-    srv <-->|"control: register"| ex
+    subgraph linuxbox
+        ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
+    end
+    tun(["QUIC tunnel, peer-to-peer<br/>(direct or relayed)"])
     srv <-->|"control: lookup"| im
-    home <==>|"QUIC tunnel, peer-to-peer<br/>(direct or relayed)"| laptop
+    srv <-->|"control: register"| ex
+    im <==> tun
+    ex <==> tun
 ```
 
 One TCP connection through the tunnel is one QUIC stream.
@@ -28,8 +30,8 @@ linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/downlo
 laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # pick your OS / CPU
 
 linuxbox> ./msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999     # publish sshd (+ UDP ports for mosh) under the name "linuxbox"; any key, any name
-laptop>   ./msnw mosh -key mylonglongsecretkey user@linuxbox                           # mosh into it
-laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox   # or ssh
+laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox   # ssh in
+laptop>   ./msnw mosh -key mylonglongsecretkey user@linuxbox                           # or mosh
 
 linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # run a command and publish the port it opens
 laptop>   ./msnw http-proxy -key mylonglongsecretkey                               # HTTP proxy on 127.0.0.1:8080; set it in the browser
@@ -55,7 +57,7 @@ Android: install `msnw-android-arm64.apk` from the same Releases page (see
 ## Build
 
 ```
-make            # static binary bin/msnw (CGO_ENABLED=0) with the server / export / client / mosh / gen-key / version subcommands
+make            # static binary bin/msnw (CGO_ENABLED=0) with the server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, mosh, gen-key, version subcommands
 make test       # unit tests + the full NAT simulation matrix (make unit / make natsim / make roam individually)
 make cross      # linux/darwin/windows builds into bin/<os>-<arch>/
 ```
@@ -66,7 +68,7 @@ with an older glibc (`GLIBC_2.34' not found`).
 
 ## Examples
 
-Each example reaches a PC at home from a laptop on the road. Both can sit
+Each example reaches a Linux box at linuxbox (`linuxbox`) from a laptop on the road. Both can sit
 behind NAT, and you do not need to run a server: the public server
 relay.ikeji.ma is the default. In every case:
 
@@ -77,7 +79,7 @@ relay.ikeji.ma is the default. In every case:
   and hard to guess (`msnw gen-key` prints a random one). It can also come
   from the `MSNW_KEY` environment variable instead of `-key`.
 - The name after `-n` is anything you like. A different link key is a
-  different namespace, so your `home` never collides with someone else's.
+  different namespace, so your `linuxbox` never collides with someone else's.
 - Once the exporter logs `registered "..."` it is ready. Leave it running.
 
 ### ssh
@@ -85,52 +87,54 @@ relay.ikeji.ma is the default. In every case:
 ```mermaid
 flowchart LR
     subgraph laptop
-        s["ssh user@home"] -->|ProxyCommand| mc["msnw connect home"]
+        s["ssh user@linuxbox"] -->|ProxyCommand| mc["msnw connect linuxbox"]
     end
-    subgraph home["home PC"]
+    subgraph linuxbox
         ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
     end
     mc ==>|QUIC tunnel| ex
 ```
 
-Home PC:
+linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n home -t 22
+msnw export -key mylonglongsecretkey -n linuxbox -t 22
 ```
 
-Laptop:
+laptop:
 
 ```
-ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey home' user@home
+ssh -o ProxyCommand='msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox
 ```
 
-The host name `home` is only what ssh displays; the ProxyCommand makes the
-actual path. Put it in `~/.ssh/config` and `ssh home` is enough (`msnw mosh`
+The host name `linuxbox` is only what ssh displays; the ProxyCommand makes the
+actual path. Put it in `~/.ssh/config` and `ssh linuxbox` is enough (`msnw mosh`
 uses the same entry):
 
 ```
-Host home
+Host linuxbox
     User user
-    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey home
+    ProxyCommand /path/to/msnw connect -key mylonglongsecretkey linuxbox
 ```
 
-Without a ProxyCommand, keep a local port connected to port 22 at home
-instead; scp and rsync work the same way:
+scp and rsync use the same entry: `scp file linuxbox:` just works.
+
+Without a ProxyCommand, keep a local port connected to port 22 on linuxbox
+instead:
 
 ```mermaid
 flowchart LR
     subgraph laptop
-        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 home"]
+        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 linuxbox"]
     end
-    subgraph home["home PC"]
+    subgraph linuxbox
         ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
     end
     im ==>|QUIC tunnel| ex
 ```
 
 ```
-msnw import -key mylonglongsecretkey -l 2222 home        # leave it running
+msnw import -key mylonglongsecretkey -l 2222 linuxbox        # leave it running
 ssh -p 2222 user@localhost
 ```
 
@@ -139,9 +143,9 @@ ssh -p 2222 user@localhost
 ```mermaid
 flowchart LR
     subgraph laptop
-        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
+        mc["mosh-importer"] -->|UDP| mm["msnw mosh"]
     end
-    subgraph home["home PC"]
+    subgraph linuxbox
         ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
         ex -->|TCP, once| sshd["sshd :22"]
         sshd -.->|starts| ms
@@ -149,24 +153,24 @@ flowchart LR
     mm ==>|QUIC tunnel| ex
 ```
 
-Home PC:
+linuxbox:
 
 ```
-msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
+msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999
 ```
 
 `-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh. A range
 lets you open any number of mosh sessions at once (each uses one port).
 
-Laptop:
+laptop:
 
 ```
-msnw mosh -key mylonglongsecretkey user@home
+msnw mosh -key mylonglongsecretkey user@linuxbox
 ```
 
 Internally it starts `mosh-server` over ssh (with msnw itself as the
-ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-client`.
-The laptop needs `ssh` and `mosh-client`, the home PC needs `mosh-server`. To
+ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-importer`.
+The laptop needs `ssh` and `mosh-importer`, the linuxbox PC needs `mosh-server`. To
 use another port range pass `-p 60001:60010` and match the exporter's `-u`.
 
 ### A directory (python -m http.server)
@@ -178,20 +182,42 @@ flowchart LR
     subgraph laptop
         b["browser / curl: http://files/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
     end
-    subgraph home["home PC"]
+    subgraph linuxbox
         we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
     end
     hp ==>|QUIC tunnel| we
 ```
 
 ```
-msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # home PC
-msnw http-proxy -key mylonglongsecretkey                                              # laptop
-curl -x http://127.0.0.1:8080 http://files/                                           # laptop
+linuxbox> msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server
+laptop>   msnw http-proxy -key mylonglongsecretkey
+laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```
 
-Add `{port}` to the command and msnw picks a free port and fills it in:
+Without `{port}` in the command, msnw watches the command and publishes the
+port it opens. With `{port}` msnw picks a free port and fills it in:
 `-- python3 -m http.server {port}`.
+
+The same without a proxy, with `export` and `import`: the server's port is
+published, and the laptop keeps a local port connected to it.
+
+```mermaid
+flowchart LR
+    subgraph laptop
+        c["curl http://localhost:8000/"] --> im["msnw import -l 8000 files"]
+    end
+    subgraph linuxbox
+        ex["msnw export -n files -t 8000"] -->|TCP| py["python -m http.server :8000"]
+    end
+    im ==>|QUIC tunnel| ex
+```
+
+```
+linuxbox> python3 -m http.server                                  # in one terminal
+linuxbox> msnw export -key mylonglongsecretkey -n files -t 8000   # in another
+laptop>   msnw import -key mylonglongsecretkey -l 8000 files
+laptop>   curl http://localhost:8000/
+```
 
 ### A dev server (jekyll)
 
@@ -202,14 +228,14 @@ flowchart LR
     subgraph laptop
         b["browser: http://blog/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
     end
-    subgraph home["home PC"]
+    subgraph linuxbox
         we["msnw wrap-export -n blog"] -->|TCP| j["jekyll :4000"]
         we -->|TCP| lr["livereload :35729"]
     end
     hp ==>|QUIC tunnel| we
 ```
 
-Home PC:
+linuxbox:
 
 ```
 msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --livereload
@@ -219,7 +245,7 @@ msnw wrap-export -key mylonglongsecretkey -n blog -- bundle exec jekyll serve --
 the lowest one, 4000, is the default. It waits as long as the build takes and
 stops exporting when the command exits.
 
-Laptop:
+laptop:
 
 ```
 msnw http-proxy -key mylonglongsecretkey      # listens on 127.0.0.1:8080
@@ -235,7 +261,7 @@ and Chrome settings.
 
 ### What to look for
 
-- On the first connection the client logs `via direct ...` or `via relay ...`.
+- On the first connection the importer logs `via direct ...` or `via relay ...`.
   `direct` means the NAT traversal worked; `relay` means the server is
   forwarding packets (encryption is the same either way).
 - When the network changes (switching Wi-Fi, for example), both ssh and mosh
@@ -246,13 +272,13 @@ and Chrome settings.
 
 There are two keys, both shared secrets:
 
-- **Link key** `-key` (`$MSNW_KEY`): shared between exporter and client; they
+- **Link key** `-key` (`$MSNW_KEY`): shared between exporter and importer; they
   only connect if it matches. The server never sees it. `msnw gen-key` makes one.
 - **Server key** `-server-key` (`$MSNW_SERVER_KEY`): an admission ticket that
   keeps strangers off your server. If the server is started without one,
   anyone may use it.
 
-Exporter and client default to the public server `relay.ikeji.ma:4433` (no
+Exporter and importer default to the public server `relay.ikeji.ma:4433` (no
 server key), so a downloaded binary plus a link key is all you need. To use
 your own server, point at it with `-s host:port` (or `$MSNW_SERVER`).
 
@@ -265,7 +291,7 @@ msnw server [-server-key S] [-listen :4433] [-relay :4434] [-key server.key]
 Both UDP ports must be reachable from outside. With `-key` the private key is
 saved so the fingerprint stays the same across restarts; the
 `fingerprint: sha256:...` printed at startup can be pinned by exporter and
-client with `-server-fp` (or `$MSNW_SERVER_FP`).
+importer with `-server-fp` (or `$MSNW_SERVER_FP`).
 
 ### export
 
@@ -285,7 +311,7 @@ protocols; combined with `-t`, the first `-t` is the default target.
 Run a command and publish the port it listens on, for as long as it runs:
 
 ```
-msnw wrap-export -key K -n foo -- python -m http.server        # then http://foo/ from a client
+msnw wrap-export -key K -n foo -- python -m http.server        # then http://foo/ from a importer
 msnw wrap-export -key K -n foo -- python -m http.server {port} # msnw picks a free port and fills it in
 msnw wrap-export -key K -n foo -p 3000 -- npm start            # the port is known
 ```
@@ -404,7 +430,7 @@ msnw mosh -key K user@home                      # -p changes the port range (def
 
 `msnw mosh` starts `mosh-server` over ssh (passing its own executable as the
 ProxyCommand) bound to 127.0.0.1 only, forwards a local UDP port to the same
-port on the exporter side inside the same process, then runs `mosh-client`
+port on the exporter side inside the same process, then runs `mosh-importer`
 against 127.0.0.1. Extra ssh options go in `-ssh "..."` or `MSNW_MOSH_SSH`. The
 link key reaches the child process through the environment, not the command
 line. Flags may follow the host (`msnw mosh user@home -v`). While mosh owns
@@ -425,43 +451,43 @@ child log there.
   connection to the server and for direct peer connections, so the public
   address the server observes on the control connection is exactly the NAT
   mapping the peers punch through (STUN-like).
-- **Introduction**: when the client looks up the name given with `-n`, the
-  server hands the exporter the client's candidate addresses (reflexive plus
-  LAN) and the client the exporter's.
+- **Introduction**: when the importer looks up the name given with `-n`, the
+  server hands the exporter the importer's candidate addresses (reflexive plus
+  LAN) and the importer the exporter's.
 - **Hole punching**: both sides send small UDP packets to all of the other's
-  candidates while the client dials QUIC to all of them in parallel; the first
-  handshake to finish wins. The client also treats the source address of any
+  candidates while the importer dials QUIC to all of them in parallel; the first
+  handshake to finish wins. The importer also treats the source address of any
   punch it receives as a candidate, so an exporter behind a symmetric NAT is
-  still reachable when the client side is a full cone.
+  still reachable when the importer side is a full cone.
 - **Relay**: if no direct connection is up after 1.5 seconds, QUIC is set up
   through the server's relay port. The relay forwards UDP verbatim, so
   encryption stays end-to-end. Symmetric-to-symmetric NATs end up here.
   The relay tells sessions apart by source address only, so both sides use a
-  fresh UDP socket for every relayed session; several clients can then share
+  fresh UDP socket for every relayed session; several importers can then share
   one exporter through the relay without taking over each other's binding.
 - **Packet size**: connections start with 1200-byte QUIC packets (the protocol
   minimum) so that the handshake also fits through 1280-byte-MTU links such as
   Tailscale; path MTU discovery raises the size afterwards.
 - **Namespaces**: the exporter registers `HMAC(link key, name)` rather than the
-  name, and the client looks up the same value. The server learns neither the
+  name, and the importer looks up the same value. The server learns neither the
   name nor the key, and different keys never collide even for the same name.
 - **Authentication**: every proof of a shared key is an HMAC over that TLS
   session's exported keying material, so it cannot be replayed or forwarded to
   another connection. The server key is proven to the server; the link key is
   proven in both directions on the first stream of every peer connection. The
-  exporter accepts no CONNECT and the client sends no data before that. The
+  exporter accepts no CONNECT and the importer sends no data before that. The
   public-key fingerprints exchanged through the server are still pinned, which
   rejects TLS from anyone the server did not introduce.
 
 ## Roaming (when the network changes)
 
-Every 2 seconds the client checks which local address the kernel would use to
+Every 2 seconds the importer checks which local address the kernel would use to
 reach the server and whether any local address has disappeared. When either
 changes (confirmed on the next tick, to ride out flaps) it drops its peer and
 server connections and redials. The route check is what catches a phone
 joining Wi-Fi while mobile data is still up: no address goes away, only the
 default network moves, and on Android listing interfaces is not allowed
-anyway. If a dial fails on every path, relay included, the client also drops
+anyway. If a dial fails on every path, relay included, the importer also drops
 its server connection, since that usually means the server's view of its
 address is stale. If the path dies without any visible change (a NAT mapping
 expired, say, or the exporter moved), the QUIC idle timeout catches it (20
@@ -473,7 +499,7 @@ TCP connections survive the redial thanks to the resumable session layer
 - CONNECT issues a token. Both ends count the payload bytes they sent and
   received and keep whatever the peer has not acknowledged in a replay buffer
   (ACKs every 64 KiB or every second).
-- When the tunnel breaks, neither end closes its local socket. The client sends
+- When the tunnel breaks, neither end closes its local socket. The importer sends
   `RESUME <token> <received>` on a fresh connection, the exporter answers with
   its own count, and each side retransmits only what the other missed.
 - A session that waits more than 5 minutes for a resume is closed. To ssh this
@@ -483,7 +509,7 @@ TCP connections survive the redial thanks to the resumable session layer
 stdio (ProxyCommand), `-l` and SOCKS5 all use the same layer. UDP flows are
 recreated on the next packet, which is how mosh comes back within seconds.
 
-`make roam` (`test/natsim.sh cone -- test/roam.sh`) changes the client site's
+`make roam` (`test/natsim.sh cone -- test/roam.sh`) changes the importer site's
 LAN address and NAT WAN address mid-session and checks the UDP recovery time
 and that a numbered TCP echo continues without loss or duplication. It runs
 three times: with the old address removed, with the old address kept and only
@@ -498,7 +524,7 @@ command, finish with all output and exit code 0.
   disrupt connections and observe which hashes connected when and from where.
   Terminating TLS on both sides and forwarding does not work: the link-key
   proof is different for every session.
-- Whoever holds the link key can be either client or exporter (the roles are
+- Whoever holds the link key can be either importer or exporter (the roles are
   symmetric), so within a group sharing a key, names can be spoofed. Use one key
   per trust boundary; "this person only gets this port" is expressed with a
   separate key and exporter.
@@ -514,7 +540,7 @@ command, finish with all output and exit code 0.
   reach arbitrary destinations, and only for holders of its link key.
 - Revocation means handing out a new key.
 - One link key per process. If SOCKS5 ever needs to span exporters with
-  different keys, this extends to a prioritized list (the client already looks
+  different keys, this extends to a prioritized list (the importer already looks
   keys up per name).
 
 ## NAT traversal tests (test/natsim.sh)
@@ -536,7 +562,7 @@ NATSIM_OPEN_INPUT=1 test/natsim.sh cone   # a NAT that does not drop unsolicited
 ```
 
 Topology: `siteA 192.168.1.10 ─ natA(10.0.0.2) ─ br0 ─ natB(10.0.0.3) ─ siteB 192.168.2.10`,
-server at 10.0.0.1. The exporter runs in siteA, the client in siteB.
+server at 10.0.0.1. The exporter runs in siteA, the importer in siteB.
 
 Findings:
 
@@ -547,13 +573,13 @@ Findings:
   masquerade filters by address and port (port-restricted cone), so the cone
   side rejects the symmetric side's new port.
 - A full cone on either side makes a direct connection possible even against a
-  symmetric peer. With a symmetric exporter and a full-cone client, the port the
+  symmetric peer. With a symmetric exporter and a full-cone importer, the port the
   server saw for the exporter is useless, but the exporter's punch reaches the
-  client, which learns the source address and dials it. Masquerade cannot make
+  importer, which learns the source address and dials it. Masquerade cannot make
   a full cone, so the simulator uses a static DNAT of the node's port instead
   (siteA pins UDP 40001 and siteB 40002 with `-port`).
 
-| siteA (exporter) : siteB (client) | result |
+| siteA (exporter) : siteB (importer) | result |
 |---|---|
 | cone : cone | direct |
 | fullcone : cone / cone : fullcone / fullcone : fullcone | direct |
@@ -571,7 +597,7 @@ Findings:
 
 `android/` holds an app with a browser tab (through the HTTP proxy) and a
 terminal tab running real mosh to a published host; msnw is bundled unchanged
-together with `mosh-client` and dropbear built with the NDK. See
+together with `mosh-importer` and dropbear built with the NDK. See
 [android/README.md](android/README.md).
 
 ## Notes
@@ -581,9 +607,9 @@ together with `mosh-client` and dropbear built with the NDK. See
   pin the server with `-key` on the server side and `-server-fp` on the nodes.
 - On Linux, quic-go warns when the UDP receive buffer is small. For high
   throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
-- For debugging, `MSNW_FORCE_RELAY=1` makes the client skip direct paths and
+- For debugging, `MSNW_FORCE_RELAY=1` makes the importer skip direct paths and
   use only the relay; `-v` shows why each dial failed.
 - `msnw version` prints the build version. Peers and the server exchange their
   versions; when they differ, logs and error messages say so, e.g.
-  `... (exporter v0.1.4, this client v0.1.5)`. A peer too old to send a
+  `... (exporter v0.1.4, this importer v0.1.5)`. A peer too old to send a
   version shows as `unknown`.

@@ -287,9 +287,9 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 			Relay:       n.RelayAddr(m.RelayPort),
 		}, nil
 	case proto.TypeError:
-		return nil, errors.New(m.Error + buildinfo.Mismatch("server", m.Version, "client"))
+		return nil, errors.New(m.Error + buildinfo.Mismatch("server", m.Version, "importer"))
 	default:
-		return nil, fmt.Errorf("unexpected reply %q%s", m.Type, buildinfo.Mismatch("server", m.Version, "client"))
+		return nil, fmt.Errorf("unexpected reply %q%s", m.Type, buildinfo.Mismatch("server", m.Version, "importer"))
 	}
 }
 
@@ -596,7 +596,7 @@ func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) 
 		peerVersion = f[3]
 	}
 	if !ident.AuthOK(linkKey, ident.LabelExporter, f[1], cs) {
-		return fail(errors.New("exporter has a different link key" + buildinfo.Mismatch("exporter", peerVersion, "client")))
+		return fail(errors.New("exporter has a different link key" + buildinfo.Mismatch("exporter", peerVersion, "importer")))
 	}
 	return port, peerVersion, nil
 }
@@ -624,7 +624,7 @@ func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string
 	}
 	f := strings.Fields(line)
 	if len(f) < 2 || f[0] != "AUTH" {
-		return fail(errors.New("client did not authenticate"))
+		return fail(errors.New("importer did not authenticate"))
 	}
 	peerVersion := ""
 	if len(f) > 2 {
@@ -632,7 +632,7 @@ func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string
 	}
 	cs := conn.ConnectionState().TLS
 	if !ident.AuthOK(linkKey, ident.LabelClient, f[1], cs) {
-		return fail(errors.New("client has a different link key" + buildinfo.Mismatch("client", peerVersion, "exporter")))
+		return fail(errors.New("importer has a different link key" + buildinfo.Mismatch("importer", peerVersion, "exporter")))
 	}
 	mine, err := ident.AuthTag(linkKey, ident.LabelExporter, cs)
 	if err != nil {
