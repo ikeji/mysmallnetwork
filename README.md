@@ -12,7 +12,7 @@ flowchart TB
         ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
     end
     subgraph laptop
-        im["msnw import / connect / proxies"]
+        im["msnw import -l 1234 hogehoge"] --- app["nc localhost 1234"]
     end
     srv <-->|"control: register"| ex
     srv <-->|"control: lookup"| im
@@ -80,41 +80,6 @@ relay.ikeji.ma is the default. In every case:
   different namespace, so your `home` never collides with someone else's.
 - Once the exporter logs `registered "..."` it is ready. Leave it running.
 
-### mosh
-
-```mermaid
-flowchart LR
-    subgraph laptop
-        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
-    end
-    subgraph home["home PC"]
-        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
-        ex -->|TCP, once| sshd["sshd :22"]
-        sshd -.->|starts| ms
-    end
-    mm ==>|QUIC tunnel| ex
-```
-
-Home PC:
-
-```
-msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
-```
-
-`-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh. A range
-lets you open any number of mosh sessions at once (each uses one port).
-
-Laptop:
-
-```
-msnw mosh -key mylonglongsecretkey user@home
-```
-
-Internally it starts `mosh-server` over ssh (with msnw itself as the
-ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-client`.
-The laptop needs `ssh` and `mosh-client`, the home PC needs `mosh-server`. To
-use another port range pass `-p 60001:60010` and match the exporter's `-u`.
-
 ### ssh
 
 ```mermaid
@@ -169,9 +134,68 @@ msnw import -key mylonglongsecretkey -l 2222 home        # leave it running
 ssh -p 2222 user@localhost
 ```
 
+### mosh
+
+```mermaid
+flowchart LR
+    subgraph laptop
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
+    end
+    subgraph home["home PC"]
+        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
+        ex -->|TCP, once| sshd["sshd :22"]
+        sshd -.->|starts| ms
+    end
+    mm ==>|QUIC tunnel| ex
+```
+
+Home PC:
+
+```
+msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
+```
+
+`-t 22` is sshd, `-u 60001-60999` is the UDP port range for mosh. A range
+lets you open any number of mosh sessions at once (each uses one port).
+
+Laptop:
+
+```
+msnw mosh -key mylonglongsecretkey user@home
+```
+
+Internally it starts `mosh-server` over ssh (with msnw itself as the
+ProxyCommand), forwards mosh's UDP through the tunnel and runs `mosh-client`.
+The laptop needs `ssh` and `mosh-client`, the home PC needs `mosh-server`. To
+use another port range pass `-p 60001:60010` and match the exporter's `-u`.
+
+### A directory (python -m http.server)
+
+Publish the directory you are in, and browse it from the laptop by name.
+
+```mermaid
+flowchart LR
+    subgraph laptop
+        b["browser / curl: http://files/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
+    end
+    subgraph home["home PC"]
+        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
+    end
+    hp ==>|QUIC tunnel| we
+```
+
+```
+msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # home PC
+msnw http-proxy -key mylonglongsecretkey                                              # laptop
+curl -x http://127.0.0.1:8080 http://files/                                           # laptop
+```
+
+Add `{port}` to the command and msnw picks a free port and fills it in:
+`-- python3 -m http.server {port}`.
+
 ### A dev server (jekyll)
 
-Publish a dev server as it starts, and browse it from the laptop by name.
+The same with a dev server, published as it starts:
 
 ```mermaid
 flowchart LR
@@ -208,30 +232,6 @@ and open `http://blog/`. Live reload works too: the page's script loads
 http://127.0.0.1:8080 http://blog/` is a quick check. See
 [socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) for Firefox
 and Chrome settings.
-
-### A directory (python -m http.server)
-
-The same with the directory you are in:
-
-```mermaid
-flowchart LR
-    subgraph laptop
-        b["browser / curl: http://files/"] -->|proxy 127.0.0.1:8080| hp["msnw http-proxy"]
-    end
-    subgraph home["home PC"]
-        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
-    end
-    hp ==>|QUIC tunnel| we
-```
-
-```
-msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # home PC
-msnw http-proxy -key mylonglongsecretkey                                              # laptop
-curl -x http://127.0.0.1:8080 http://files/                                           # laptop
-```
-
-Add `{port}` to the command and msnw picks a free port and fills it in:
-`-- python3 -m http.server {port}`.
 
 ### What to look for
 

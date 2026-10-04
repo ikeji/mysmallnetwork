@@ -11,7 +11,7 @@ flowchart TB
         ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
     end
     subgraph laptop["ノート PC"]
-        im["msnw import / connect / プロキシ"]
+        im["msnw import -l 1234 hogehoge"] --- app["nc localhost 1234"]
     end
     srv <-->|"制御: register"| ex
     srv <-->|"制御: lookup"| im
@@ -74,41 +74,6 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
   他人の `home` と衝突することはない。
 - exporter のログに `registered "..."` と出れば準備完了。起動したままにしておく。
 
-### mosh
-
-```mermaid
-flowchart LR
-    subgraph laptop["ノート PC"]
-        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
-    end
-    subgraph home["自宅 PC"]
-        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
-        ex -->|"TCP、最初の 1 回"| sshd["sshd :22"]
-        sshd -.->|起動| ms
-    end
-    mm ==>|QUIC トンネル| ex
-```
-
-自宅 PC:
-
-```
-msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
-```
-
-`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲。範囲にしておくと mosh
-セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
-
-ノート PC:
-
-```
-msnw mosh -key mylonglongsecretkey user@home
-```
-
-内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を起動し、mosh の UDP を
-トンネルで転送して `mosh-client` を起動する。ノート PC には `ssh` と `mosh-client` が、
-自宅 PC には `mosh-server` が要る。ポート範囲を変えるなら `-p 60001:60010` のように指定し、
-exporter 側の `-u` も合わせる。
-
 ### ssh
 
 ```mermaid
@@ -162,9 +127,68 @@ msnw import -key mylonglongsecretkey -l 2222 home        # 起動したままに
 ssh -p 2222 user@localhost
 ```
 
+### mosh
+
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        mc["mosh-client"] -->|UDP| mm["msnw mosh"]
+    end
+    subgraph home["自宅 PC"]
+        ex["msnw export -t 22 -u 60001-60999"] -->|UDP| ms["mosh-server :60001"]
+        ex -->|"TCP、最初の 1 回"| sshd["sshd :22"]
+        sshd -.->|起動| ms
+    end
+    mm ==>|QUIC トンネル| ex
+```
+
+自宅 PC:
+
+```
+msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
+```
+
+`-t 22` が sshd、`-u 60001-60999` が mosh 用の UDP ポート範囲。範囲にしておくと mosh
+セッションを何本でも同時に開ける(1 本ごとに 1 ポート使う)。
+
+ノート PC:
+
+```
+msnw mosh -key mylonglongsecretkey user@home
+```
+
+内部では ssh(ProxyCommand に msnw 自身を指定)で `mosh-server` を起動し、mosh の UDP を
+トンネルで転送して `mosh-client` を起動する。ノート PC には `ssh` と `mosh-client` が、
+自宅 PC には `mosh-server` が要る。ポート範囲を変えるなら `-p 60001:60010` のように指定し、
+exporter 側の `-u` も合わせる。
+
+### ディレクトリ(python -m http.server)
+
+いまいるディレクトリを公開し、ノート PC のブラウザから名前で開く。
+
+```mermaid
+flowchart LR
+    subgraph laptop["ノート PC"]
+        b["ブラウザ / curl: http://files/"] -->|"プロキシ 127.0.0.1:8080"| hp["msnw http-proxy"]
+    end
+    subgraph home["自宅 PC"]
+        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
+    end
+    hp ==>|QUIC トンネル| we
+```
+
+```
+msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # 自宅 PC
+msnw http-proxy -key mylonglongsecretkey                                              # ノート PC
+curl -x http://127.0.0.1:8080 http://files/                                           # ノート PC
+```
+
+コマンドに `{port}` を書くと msnw が空きポートを選んで埋める:
+`-- python3 -m http.server {port}`。
+
 ### 開発サーバー(jekyll)
 
-開発サーバーを起動と同時に公開し、ノート PC のブラウザから名前で開く。
+開発サーバーも同じ要領で、起動と同時に公開する:
 
 ```mermaid
 flowchart LR
@@ -198,30 +222,6 @@ msnw http-proxy -key mylonglongsecretkey      # 127.0.0.1:8080 で待つ
 ページ内のスクリプトが読む `http://blog:35729/` も exporter が公開しているため。
 `curl -x http://127.0.0.1:8080 http://blog/` で手早く確認できる。Firefox / Chrome の設定は
 [socks5-proxy, http-proxy, proxy](#socks5-proxy-http-proxy-proxy) を参照。
-
-### ディレクトリ(python -m http.server)
-
-いまいるディレクトリを同じ要領で:
-
-```mermaid
-flowchart LR
-    subgraph laptop["ノート PC"]
-        b["ブラウザ / curl: http://files/"] -->|"プロキシ 127.0.0.1:8080"| hp["msnw http-proxy"]
-    end
-    subgraph home["自宅 PC"]
-        we["msnw wrap-export -n files"] -->|TCP| py["python -m http.server :8000"]
-    end
-    hp ==>|QUIC トンネル| we
-```
-
-```
-msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server          # 自宅 PC
-msnw http-proxy -key mylonglongsecretkey                                              # ノート PC
-curl -x http://127.0.0.1:8080 http://files/                                           # ノート PC
-```
-
-コマンドに `{port}` を書くと msnw が空きポートを選んで埋める:
-`-- python3 -m http.server {port}`。
 
 ### 動作の見方
 
