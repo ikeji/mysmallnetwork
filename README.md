@@ -21,31 +21,17 @@ from behind NAT.
 
 ## Quick start
 
-Both machines, from [Releases](https://github.com/ikeji/mysmallnetwork/releases):
-
 ```
-curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
-```
+linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # pick your OS / CPU
 
-Home PC (sshd side), with a link key of your choice:
+linuxbox> ./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999     # publish sshd (+ UDP ports for mosh) as "home"; any key, any name
+laptop>   ./msnw mosh -key mylonglongsecretkey user@home                           # mosh into it
+laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home   # or ssh
 
-```
-./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
-```
-
-Laptop:
-
-```
-./msnw mosh -key mylonglongsecretkey user@home
-ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home
-```
-
-Share a web server instead:
-
-```
-./msnw wrap-export -key mylonglongsecretkey -n web -- python3 -m http.server   # where the files are
-./msnw http-proxy -key mylonglongsecretkey                                     # where the browser is
-curl -x http://127.0.0.1:8080 http://web/                                      # or set the browser's proxy
+linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # run a command and publish the port it opens
+laptop>   ./msnw http-proxy -key mylonglongsecretkey                               # HTTP proxy on 127.0.0.1:8080; set it in the browser
+laptop>   curl -x http://127.0.0.1:8080 http://files/                              # names resolve through the tunnel
 ```
 
 ## Install

@@ -20,31 +20,17 @@
 
 ## クイックスタート
 
-両方の PC で、[Releases](https://github.com/ikeji/mysmallnetwork/releases) から:
-
 ```
-curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
-```
+linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz
+laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # OS / CPU に合わせて選ぶ
 
-自宅 PC(sshd 側)。リンクキーは好きな文字列:
+linuxbox> ./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999     # sshd(と mosh 用 UDP)を "home" の名前で公開。キーも名前も好きに
+laptop>   ./msnw mosh -key mylonglongsecretkey user@home                           # mosh で入る
+laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home   # ssh なら
 
-```
-./msnw export -key mylonglongsecretkey -n home -t 22 -u 60001-60999
-```
-
-ノート PC:
-
-```
-./msnw mosh -key mylonglongsecretkey user@home
-ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey home' user@home
-```
-
-Web サーバーを共有するなら:
-
-```
-./msnw wrap-export -key mylonglongsecretkey -n web -- python3 -m http.server   # ファイルのある側
-./msnw http-proxy -key mylonglongsecretkey                                     # ブラウザのある側
-curl -x http://127.0.0.1:8080 http://web/                                      # またはブラウザのプロキシに設定
+linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # コマンドを実行し、開いたポートを公開
+laptop>   ./msnw http-proxy -key mylonglongsecretkey                               # 127.0.0.1:8080 の HTTP プロキシ。ブラウザに設定する
+laptop>   curl -x http://127.0.0.1:8080 http://files/                              # 名前はトンネル経由で解決される
 ```
 
 ## インストール
