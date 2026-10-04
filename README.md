@@ -180,8 +180,11 @@ msnw wrap-export -key K -n foo -p 3000 -- npm start            # the port is kno
 The port is taken from `-p`, or from a `{port}` placeholder in the command
 (`-p 0` or no `-p` picks a free port); either way it is also exported to the
 command as `$PORT`. With neither, msnw watches the command and its children
-for a listening TCP socket (Linux, via /proc) and publishes that. The export
-ends when the command exits, and Ctrl-C stops both.
+for listening TCP sockets (Linux, via /proc) and publishes all of them, the
+lowest port being the default that `http://foo/` reaches (a dev server's
+live-reload port, for instance, is still available as `http://foo:35729/`).
+Use `-p` when the default should be another port. The export ends when the
+command exits, and Ctrl-C stops both.
 
 ### import, connect
 
@@ -215,10 +218,12 @@ How proxy destinations (SOCKS5 and HTTP proxy alike) are interpreted:
 | `db.hogehoge.msnw`      | `db:<port>` as seen from exporter hogehoge   |
 | anything else (FQDN/IP) | the default exporter given with `-n`; without `-n`, a direct connection from this machine |
 
-(*) If the exporter publishes exactly one TCP target (`msnw export -n web -t 8765`),
-the name denotes a service and the port is ignored, so `http://web/` works.
-With several `-t` or `--all` the name denotes a host and the port selects the
-target. This only applies to SOCKS5; an explicit `-n web:80` stays strict.
+(*) The port a browser sends for a bare name is only a hint: if the exporter
+publishes that port it is used, otherwise the exporter's first target is, so
+`http://web/` reaches `msnw export -n web -t 8765` and `wrap-export` of a dev
+server that also opens a live-reload port. With `--all` every port is
+exported and the hint always wins. This only applies to the proxies; an
+explicit `-n web:80` stays strict.
 
 Because everything else is reached directly, the proxy can stay configured in
 a browser all the time. It listens on 127.0.0.1 by default; binding another

@@ -42,9 +42,9 @@ func TestPolicyResolve(t *testing.T) {
 			t.Errorf("resolve(%s, %q, all=%v) = %q, %v; want %q ok=%v", c.proto, c.req, c.all, got, err, c.want, c.ok)
 		}
 	}
-	// "~port" hints from SOCKS5: a single-target exporter is a service and
-	// ignores the port; several targets or --all make it a host, where the
-	// port must match.
+	// "~port" hints from the proxies: an exported port is selected, anything
+	// else falls back to the default (first) target. With --all every port
+	// is exported, so the hint always wins there.
 	svc := &policy{tcp: mk("8765")}
 	for _, req := range []string{"~80", "~443", "~8765"} {
 		if got, err := svc.resolve("tcp", req); err != nil || got != "localhost:8765" {
@@ -58,8 +58,18 @@ func TestPolicyResolve(t *testing.T) {
 	if got, err := p.resolve("tcp", "~80"); err != nil || got != "10.0.0.5:80" {
 		t.Errorf("host resolve(~80) = %q, %v", got, err)
 	}
-	if _, err := p.resolve("tcp", "~81"); err == nil {
-		t.Error("a host with several targets must reject an unexported hinted port")
+	if got, err := p.resolve("tcp", "~81"); err != nil || got != p.tcp[0].String() {
+		t.Errorf("several targets: unexported hint must fall back to the first target, got %q, %v", got, err)
+	}
+	multi := &policy{tcp: mk("4000", "35729")}
+	if got, err := multi.resolve("tcp", "~80"); err != nil || got != "localhost:4000" {
+		t.Errorf("wrap-export style resolve(~80) = %q, %v; want localhost:4000", got, err)
+	}
+	if got, err := multi.resolve("tcp", "~35729"); err != nil || got != "localhost:35729" {
+		t.Errorf("wrap-export style resolve(~35729) = %q, %v", got, err)
+	}
+	if _, err := (&policy{}).resolve("tcp", "~80"); err == nil {
+		t.Error("no targets: a hint has nothing to fall back to")
 	}
 	if got, err := (&policy{tcp: mk("8765"), all: true}).resolve("tcp", "~80"); err != nil || got != "localhost:80" {
 		t.Errorf("--all resolve(~80) = %q, %v", got, err)
