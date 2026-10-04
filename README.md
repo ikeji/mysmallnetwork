@@ -414,14 +414,17 @@ reached directly, so the proxy can stay on all the time.
   over http). Firefox and Chrome honour the SOCKS5 name resolution from a PAC
   as they do for a manual SOCKS5 setting. For an HTTP-proxy-only client,
   change `MSNW_PROXY` in the file to `PROXY 127.0.0.1:8080`.
-- **Android**: neither Chrome nor WebView (androidx `ProxyController`) can use
-  SOCKS, so run `msnw http-proxy` in Termux and set the Wi-Fi
-  network's proxy to host `127.0.0.1`, port `8080` (Settings → Wi-Fi → the
-  network → Advanced → Proxy: Manual). Chrome then opens `http://mypc/`. The
-  setting is per Wi-Fi network and does not apply on mobile data; an app that
-  sets the same proxy through `ProxyController` works on any network. Without
-  a proxy at all, `msnw import -l 8765 mypc` and `http://localhost:8765/`
-  work in every browser.
+- **Android**: the easiest way is the msnw app (`msnw-android-arm64.apk` on
+  the Releases page, see [Android app](#android-app)): it runs `msnw
+  http-proxy` itself and its browser tabs go through it, so `http://mypc/`
+  works on any network with no proxy settings at all; it also has mosh
+  terminal tabs. With another browser, neither Chrome nor WebView (androidx
+  `ProxyController`) can use SOCKS, so run `msnw http-proxy` in Termux and set
+  the Wi-Fi network's proxy to host `127.0.0.1`, port `8080` (Settings →
+  Wi-Fi → the network → Advanced → Proxy: Manual). Chrome then opens
+  `http://mypc/`. The setting is per Wi-Fi network and does not apply on
+  mobile data. Without a proxy at all, `msnw import -l 8765 mypc` and
+  `http://localhost:8765/` work in every browser.
 
 Example: ssh
 

@@ -392,13 +392,15 @@ msnw socks5-proxy            # ブラウザのある PC
   `file:///path/to/msnw.pac` を指定する(http で配ってもよい)。Firefox も Chrome も、
   PAC で指定した SOCKS5 では手動設定と同様にプロキシ側で名前解決する。HTTP プロキシ
   だけで使うなら、ファイル内の `MSNW_PROXY` を `PROXY 127.0.0.1:8080` に変える。
-- **Android**: Chrome も WebView(androidx の `ProxyController`)も SOCKS は使えないので、
-  Termux で `msnw http-proxy` を動かし、Wi-Fi ネットワークのプロキシ設定を
-  ホスト `127.0.0.1`、ポート `8080` にする(設定 → Wi-Fi → そのネットワーク → 詳細 →
-  プロキシ: 手動)。これで Chrome から `http://mypc/` が開ける。この設定は Wi-Fi ごとで、
-  モバイル回線では効かない。同じプロキシを `ProxyController` で設定する自作アプリなら
-  回線を問わず効く。プロキシを使わないなら `msnw import -l 8765 mypc` で
-  `http://localhost:8765/` を開く方法がどのブラウザでも使える。
+- **Android**: いちばん簡単なのは msnw アプリ(Releases ページの `msnw-android-arm64.apk`、
+  「[Android アプリ](#android-アプリ)」の節を参照)。アプリ自身が `msnw http-proxy` を動かし、
+  ブラウザタブはそれを通るので、プロキシ設定なしで回線を問わず `http://mypc/` が開ける。
+  mosh の端末タブもある。他のブラウザを使う場合、Chrome も WebView(androidx の
+  `ProxyController`)も SOCKS は使えないので、Termux で `msnw http-proxy` を動かし、
+  Wi-Fi ネットワークのプロキシ設定をホスト `127.0.0.1`、ポート `8080` にする(設定 →
+  Wi-Fi → そのネットワーク → 詳細 → プロキシ: 手動)。これで Chrome から `http://mypc/`
+  が開ける。この設定は Wi-Fi ごとで、モバイル回線では効かない。プロキシを使わないなら
+  `msnw import -l 8765 mypc` で `http://localhost:8765/` を開く方法がどのブラウザでも使える。
 
 例: ssh
 
