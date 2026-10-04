@@ -94,8 +94,12 @@ func WrapExport(args []string) {
 	if chosen > 0 {
 		ports = []int{chosen}
 	} else {
-		deadline := time.Now().Add(30 * time.Second)
-		for len(ports) == 0 && time.Now().Before(deadline) {
+		// No deadline: a dev server may build for minutes before it
+		// listens, and the command is the user's to stop. Just say so now
+		// and then.
+		started := time.Now()
+		next := 30 * time.Second
+		for len(ports) == 0 {
 			select {
 			case code := <-exited:
 				log.Printf("%s exited (%d) before listening on a port", cmdArgs[0], code)
@@ -103,11 +107,11 @@ func WrapExport(args []string) {
 			case <-time.After(200 * time.Millisecond):
 			}
 			ports = listeningPorts(cmd.Process.Pid)
-		}
-		if len(ports) == 0 {
-			log.Printf("could not detect a listening port; use -p PORT or {port} in the command")
-			cmd.Process.Signal(syscall.SIGTERM)
-			os.Exit(<-exited)
+			if len(ports) == 0 && time.Since(started) >= next {
+				log.Printf("still waiting for %s to listen on a TCP port (%s); use -p PORT if it already does",
+					cmdArgs[0], time.Since(started).Round(time.Second))
+				next *= 2
+			}
 		}
 	}
 	pol := &policy{}
