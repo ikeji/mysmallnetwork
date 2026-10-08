@@ -8,7 +8,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -244,6 +246,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Tab label for a browser tab before the page sends a title: the URL's host, else "B". */
+    private fun webLabel(u: String?): String =
+        u?.let { Uri.parse(it).host }?.takeIf { it.isNotBlank() }?.take(12) ?: "B"
+
     private fun newBrowserTab(initialUrl: String): Tab.Browser {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Color.parseColor("#333333")) }
@@ -269,10 +275,12 @@ class MainActivity : AppCompatActivity() {
         content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         lateinit var tab: Tab.Browser
-        val button = makeTabButton("B") { tab }
+        val button = makeTabButton(webLabel(initialUrl)) { tab }
         tab = Tab.Browser(button, column, web, url)
         tabs.add(tab)
         web.webViewClient = object : WebViewClient() {
+            // Label: the host name until the page reports a title (onReceivedTitle below).
+            override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) { button.text = webLabel(u) }
             override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
         }
         web.webChromeClient = object : WebChromeClient() {
@@ -363,11 +371,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Tab label: the title set by the shell (OSC 0/2), else T<id>; "!" marks a finished session. */
+    /** Tab label: the title set by the shell (OSC 0/2), else the target's host name; "!" marks a finished session. */
     private fun termLabel(tab: Tab.Term): String {
-        val title = tab.entry.session.title?.takeIf { it.isNotBlank() }?.take(16) ?: "T${tab.entry.id}"
+        val title = (tab.entry.session.title?.takeIf { it.isNotBlank() } ?: hostOf(tab.entry.target)).take(16)
         return if (tab.entry.finished) "$title!" else title
     }
+
+    /** "user@host" -> "host"; a bare host name is returned as is. */
+    private fun hostOf(target: String): String = target.substringAfterLast('@').ifBlank { target }
 
     private fun addTermTab(entry: MsnwService.Entry): Tab.Term {
         lateinit var tab: Tab.Term
