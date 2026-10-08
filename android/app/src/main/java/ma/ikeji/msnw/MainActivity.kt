@@ -10,12 +10,17 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.text.InputType
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -29,6 +34,8 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -38,6 +45,8 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
+import kotlin.math.abs
+import kotlin.math.sign
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
@@ -64,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var content: FrameLayout
     private lateinit var term: TerminalView
     private var ctrlPending = false
+    private var altPending = false
     private var fontSize = 0
 
     private var svc: MsnwService? = null
@@ -323,15 +333,16 @@ class MainActivity : AppCompatActivity() {
         term.setTerminalViewClient(viewClient)
         term.keepScreenOn = true
         val send = { s: String -> if (s.isNotEmpty()) (current as? Tab.Term)?.entry?.session?.write(s) }
-        findViewById<Button>(R.id.kEsc).setOnClickListener { send("\u001b") }
-        findViewById<Button>(R.id.kTab).setOnClickListener { send("\t") }
-        findViewById<Button>(R.id.kCtrl).setOnClickListener { ctrlPending = !ctrlPending; toast(if (ctrlPending) "Ctrl on" else "Ctrl off") }
-        findViewById<Button>(R.id.kUp).setOnClickListener { send("\u001b[A") }
-        findViewById<Button>(R.id.kDown).setOnClickListener { send("\u001b[B") }
-        findViewById<Button>(R.id.kLeft).setOnClickListener { send("\u001b[D") }
-        findViewById<Button>(R.id.kRight).setOnClickListener { send("\u001b[C") }
-        findViewById<Button>(R.id.kPgUp).setOnClickListener { send("\u001b[5~") }
-        findViewById<Button>(R.id.kPgDn).setOnClickListener { send("\u001b[6~") }
+        // Ctrl and Alt apply to the next key typed, like sticky modifiers.
+        val toggleCtrl = { ctrlPending = !ctrlPending; toast(if (ctrlPending) "Ctrl on" else "Ctrl off") }
+        val toggleAlt = { altPending = !altPending; toast(if (altPending) "Alt on" else "Alt off") }
+        // Esc is tapped all the time (vi), so it stays one tap; Tab, Ctrl and Alt ride on the same key as flicks.
+        flickKey(findViewById(R.id.kEsc), up = Flick("Tab") { send("\t") }, down = Flick("Ctrl", toggleCtrl), right = Flick("Alt", toggleAlt),
+            tap = Flick("Esc") { send("\u001b") }, repeat = false)
+        val arrows = Flick.arrows(send, "\u001b[A", "\u001b[B", "\u001b[D", "\u001b[C")
+        flickKey(findViewById(R.id.kArrows), arrows[0], arrows[1], arrows[2], arrows[3])
+        flickKey(findViewById(R.id.kPage), up = Flick("PgUp") { send("\u001b[5~") }, down = Flick("PgDn") { send("\u001b[6~") },
+            left = Flick("Home") { send("\u001b[H") }, right = Flick("End") { send("\u001b[F") })
         // Text input row for IMEs that cannot type into the terminal view directly (Japanese etc.).
         val input = findViewById<EditText>(R.id.termInput)
         val sendInput = { _: Boolean ->
@@ -339,9 +350,12 @@ class MainActivity : AppCompatActivity() {
             input.setText("")
         }
         val inputRow = findViewById<View>(R.id.termInputRow)
-        findViewById<Button>(R.id.kText).setOnClickListener {
+        val keys = findViewById<View>(R.id.keys)
+        // The input row takes the place of the key row; its × brings the keys back.
+        val toggleInputRow: () -> Unit = {
             val show = inputRow.visibility != View.VISIBLE
             inputRow.visibility = if (show) View.VISIBLE else View.GONE
+            keys.visibility = if (show) View.GONE else View.VISIBLE
             if (show) {
                 input.requestFocus()
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
@@ -349,12 +363,151 @@ class MainActivity : AppCompatActivity() {
                 showKeyboard()
             }
         }
+        // Shell punctuation that is a chore to reach on a phone keyboard rides on the あ key.
+        flickKey(findViewById(R.id.kText), up = Flick(":") { send(":") }, down = Flick("$") { send("$") },
+            left = Flick("-") { send("-") }, right = Flick("/") { send("/") }, tap = Flick("あ", toggleInputRow), repeat = false)
+        findViewById<Button>(R.id.kInputClose).setOnClickListener { toggleInputRow() }
         input.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_SEND) { sendInput(true); true } else false }
         input.setOnKeyListener { _, keyCode, event ->
             if (keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN) { sendInput(true); true } else false
         }
-        findViewById<Button>(R.id.kReconnect).setOnClickListener { (current as? Tab.Term)?.let { restartSession(it) } }
-        findViewById<Button>(R.id.kClose).setOnClickListener { (current as? Tab.Term)?.let { closeTab(it) } }
+        // Rarely used actions live in a menu so the key row fits a phone screen without scrolling.
+        val more = findViewById<Button>(R.id.kMore)
+        more.setOnClickListener {
+            PopupMenu(this, more).apply {
+                menu.add("Reconnect").setOnMenuItemClickListener { (current as? Tab.Term)?.let { restartSession(it) }; true }
+                menu.add("Close tab").setOnMenuItemClickListener { (current as? Tab.Term)?.let { closeTab(it) }; true }
+            }.show()
+        }
+    }
+
+    /** One direction of a flick key: [name] is shown in the guide, [act] is what it does. */
+    private class Flick(val name: String, val act: () -> Unit) {
+        companion object {
+            fun arrows(send: (String) -> Unit, up: String, down: String, left: String, right: String) =
+                listOf(Flick("↑") { send(up) }, Flick("↓") { send(down) }, Flick("←") { send(left) }, Flick("→") { send(right) })
+        }
+    }
+
+    /**
+     * The guide shown above a flick key while it is held: a cross with the action of each
+     * direction, the tap action in the middle. [hit] lights up a direction.
+     */
+    private inner class FlickGuide(up: Flick?, down: Flick?, left: Flick?, right: Flick?, private val tap: String) {
+        private val d = resources.displayMetrics.density
+        private val cells = HashMap<Flick, TextView>()
+        private val popup: PopupWindow
+        private var lit: TextView? = null
+
+        init {
+            fun cell(f: Flick?): TextView = TextView(this@MainActivity).apply {
+                text = f?.name ?: ""
+                setTextColor(Color.WHITE); textSize = 14f
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams((56 * d).toInt(), (36 * d).toInt())
+                if (f != null) cells[f] = this
+            }
+            fun row(vararg v: View) = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                v.forEach { addView(it) }
+            }
+            val center = cell(null).apply { text = tap; setTextColor(Color.parseColor("#7fd1ff")) }
+            val box = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                background = GradientDrawable().apply { setColor(0xee333333.toInt()); cornerRadius = 8 * d }
+                addView(row(cell(null), cell(up), cell(null)))
+                addView(row(cell(left), center, cell(right)))
+                addView(row(cell(null), cell(down), cell(null)))
+            }
+            box.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+            popup = PopupWindow(box, box.measuredWidth, box.measuredHeight).apply { isTouchable = false }
+        }
+
+        fun show(anchor: View) {
+            lit?.setBackgroundColor(Color.TRANSPARENT); lit = null
+            val loc = IntArray(2).also { anchor.getLocationInWindow(it) }
+            val x = loc[0] + anchor.width / 2 - popup.width / 2
+            val y = loc[1] - popup.height - (8 * d).toInt()
+            popup.showAtLocation(anchor, Gravity.NO_GRAVITY, x, y)
+        }
+
+        fun hit(f: Flick) {
+            if (lit !== cells[f]) { lit?.setBackgroundColor(Color.TRANSPARENT); lit = cells[f]; lit?.setBackgroundColor(0xff1565c0.toInt()) }
+        }
+
+        fun hide() = popup.dismiss()
+    }
+
+    /**
+     * The face of a flick key: [main] in the middle, the flick directions around it in small
+     * type, so the key itself says what a flick does.
+     *
+     *       Tab
+     *   ←   Esc   →
+     *       Ctrl
+     */
+    private fun flickLabel(main: CharSequence, up: Flick?, down: Flick?, left: Flick?, right: Flick?): CharSequence {
+        val b = SpannableStringBuilder()
+        fun small(t: String) {
+            val from = b.length
+            b.append(t)
+            b.setSpan(RelativeSizeSpan(0.6f), from, b.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        small(up?.name ?: " "); b.append('\n')
+        small(left?.name ?: ""); if (left != null) b.append(' ')
+        b.append(main)
+        if (right != null) b.append(' '); small(right?.name ?: "")
+        b.append('\n'); small(down?.name ?: " ")
+        return b
+    }
+
+    /**
+     * One key for up to five actions: a flick of [FLICK_STEP_DP] runs the action of its
+     * direction, a plain tap runs [tap] (or, when null, repeats the last flicked direction).
+     * With [repeat], dragging on runs the direction again every key width (or height) so the
+     * cursor follows the finger. A guide with the assignments is shown while the key is held.
+     */
+    private fun flickKey(button: Button, up: Flick? = null, down: Flick? = null, left: Flick? = null, right: Flick? = null,
+                         tap: Flick? = null, repeat: Boolean = true) {
+        val flick = FLICK_STEP_DP * resources.displayMetrics.density
+        val guide = FlickGuide(up, down, left, right, tap?.name ?: "again")
+        button.text = flickLabel(button.text, up, down, left, right)
+        button.isAllCaps = false // the framework's all-caps transform would drop the label's spans
+        button.includeFontPadding = false
+        button.minHeight = 0; button.minimumHeight = 0 // as tall as the three lines need, no more
+        button.setPadding(0, button.paddingTop / 2, 0, button.paddingBottom / 2)
+        var ox = 0f; var oy = 0f // where the next step is measured from
+        var count = 0 // keys sent by this touch
+        var last: Flick? = null
+        fun fire(f: Flick) { f.act(); count++; last = f; guide.hit(f) }
+        fun release(v: View) { v.isPressed = false; guide.hide() }
+        button.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    ox = e.x; oy = e.y; count = 0; v.isPressed = true
+                    guide.show(v)
+                }
+                MotionEvent.ACTION_MOVE -> if (repeat || count == 0) {
+                    val dx = e.x - ox; val dy = e.y - oy
+                    val sx = if (count == 0) flick else v.width.toFloat() // the first key comes from a flick, the rest per key size
+                    val sy = if (count == 0) flick else v.height.toFloat()
+                    if (abs(dx) >= sx && abs(dx) >= abs(dy)) {
+                        ox += sx * sign(dx); oy = e.y
+                        (if (dx > 0) right else left)?.let { fire(it) }
+                    } else if (abs(dy) >= sy) {
+                        oy += sy * sign(dy); ox = e.x
+                        (if (dy > 0) down else up)?.let { fire(it) }
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    release(v)
+                    if (count == 0) (tap ?: last)?.act()
+                    v.performClick()
+                }
+                MotionEvent.ACTION_CANCEL -> release(v)
+            }
+            true
+        }
     }
 
     private fun newTerminalTab(target: String) {
@@ -468,7 +621,7 @@ class MainActivity : AppCompatActivity() {
         override fun onKeyUp(keyCode: Int, e: KeyEvent): Boolean = false
         override fun onLongPress(event: MotionEvent): Boolean = false
         override fun readControlKey(): Boolean { val c = ctrlPending; ctrlPending = false; return c }
-        override fun readAltKey() = false
+        override fun readAltKey(): Boolean { val a = altPending; altPending = false; return a }
         override fun readShiftKey() = false
         override fun readFnKey() = false
         override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession): Boolean = false
@@ -526,6 +679,8 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val URL_HISTORY = "url_history"
         const val TARGET_HISTORY = "target_history"
+        /** Finger travel that makes a flick, in dp. */
+        const val FLICK_STEP_DP = 24
     }
 
     override fun onDestroy() {
