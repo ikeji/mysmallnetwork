@@ -33,6 +33,10 @@ type Session struct {
 	// OnDetach, if set, is called (in its own goroutine) whenever the stream
 	// carrying the session is lost. The client uses it to start a resume.
 	OnDetach func(*Session)
+	// OnClose, if set, is called once when the session ends, however it
+	// ends. The client uses it to count the sessions a peer connection
+	// carries.
+	OnClose func(*Session)
 
 	mu   sync.Mutex
 	cond *sync.Cond
@@ -311,6 +315,9 @@ func (s *Session) maybeFinish() {
 		st.Close()
 	}
 	s.pw.Close()
+	if s.OnClose != nil {
+		s.OnClose(s)
+	}
 }
 
 // Close aborts the session on both sides.
@@ -334,6 +341,9 @@ func (s *Session) Close() error {
 	}
 	s.pw.CloseWithError(ErrClosed)
 	s.pr.Close()
+	if s.OnClose != nil {
+		s.OnClose(s)
+	}
 	return nil
 }
 

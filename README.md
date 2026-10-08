@@ -458,6 +458,13 @@ child log there.
   (RFC 9221). Anything too large for one packet goes length-framed over the
   flow's own stream. There is one flow per local source address; it closes
   after 10 minutes of silence.
+- **Idle peer connections are closed**: a peer connection costs a keepalive
+  round trip every 5 seconds for as long as it lives, which adds up on a
+  phone's data plan. The importer closes a connection that has carried no TCP
+  session and no UDP flow for 2 minutes and redials on the next use (a second
+  or two: lookup, hole punch, authentication). Connections in use are never
+  touched, so a long ssh session or a mosh tab stays up. The control
+  connection to the server stays open (keepalive every 15 seconds).
 - **One socket**: each node uses a single UDP socket both for the control
   connection to the server and for direct peer connections, so the public
   address the server observes on the control connection is exactly the NAT

@@ -182,3 +182,40 @@ func TestFinBothWays(t *testing.T) {
 		t.Fatal("sessions should be closed after both FINs")
 	}
 }
+
+// TestOnClose checks that OnClose fires exactly once, whether the session
+// ends by both FINs or by an abort.
+func TestOnClose(t *testing.T) {
+	for _, abort := range []bool{false, true} {
+		c, s := quicPair(t)
+		a, b := New("t3"), New("t3")
+		closedA, closedB := make(chan struct{}, 4), make(chan struct{}, 4)
+		a.OnClose = func(*Session) { closedA <- struct{}{} }
+		b.OnClose = func(*Session) { closedB <- struct{}{} }
+		cs, crd, ss, srd := streamPair(t, c, s)
+		b.Attach(ss, srd, 0)
+		a.Attach(cs, crd, 0)
+		if abort {
+			a.Close()
+		} else {
+			a.CloseWrite()
+			b.CloseWrite()
+		}
+		for name, ch := range map[string]chan struct{}{"a": closedA, "b": closedB} {
+			select {
+			case <-ch:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("abort=%v: OnClose on %s never fired", abort, name)
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		if len(closedA)+len(closedB) != 0 {
+			t.Fatalf("abort=%v: OnClose fired more than once", abort)
+		}
+		a.Close()
+		b.Close()
+		if len(closedA)+len(closedB) != 0 {
+			t.Fatalf("abort=%v: OnClose fired again on a second Close", abort)
+		}
+	}
+}

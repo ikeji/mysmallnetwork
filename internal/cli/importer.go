@@ -45,23 +45,73 @@ type entry struct {
 	peerVersion string         // exporter's build version ("" if it did not say)
 	udp         *tunnel.UDPMux // lazily created for udpConn
 	udpConn     *quic.Conn
+	users       int       // live leases: TCP sessions and UDP flows on conn
+	idleSince   time.Time // when users last dropped to zero; zero while in use
 }
+
+// An unused peer connection costs a keepalive round trip every few seconds
+// for as long as it lives, which adds up on a phone. Connections that have
+// carried nothing for peerIdle are closed; the next use redials (a second or
+// two for the lookup, the hole punch and the authentication).
+const (
+	peerIdle  = 2 * time.Minute
+	idleSweep = 10 * time.Second
+)
 
 func (p *pool) keyFor(name string) string { return p.linkKey }
 
-// get returns a live, link-key-authenticated connection to exporter name and
-// the exporter's default target port.
-func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
+func (p *pool) entry(name string) *entry {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	e := p.ents[name]
 	if e == nil {
 		e = &entry{}
 		p.ents[name] = e
 	}
-	p.mu.Unlock()
+	return e
+}
 
+// get returns a live, link-key-authenticated connection to exporter name and
+// the exporter's default target port. Nothing keeps the connection alive for
+// the caller: it may be closed as idle at any time, so anything that puts a
+// stream or flow on it goes through lease instead.
+func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
+	e := p.entry(name)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return p.connectLocked(ctx, name, e)
+}
+
+// lease is get plus a hold on the connection: it is not closed as idle while
+// a lease on it is live. The hold is counted per exporter, so it survives a
+// redial (a resumed session keeps its original lease). release may be called
+// more than once.
+func (p *pool) lease(ctx context.Context, name string) (*quic.Conn, int, func(), error) {
+	e := p.entry(name)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	conn, port, err := p.connectLocked(ctx, name, e)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	e.users++
+	e.idleSince = time.Time{}
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			e.mu.Lock()
+			defer e.mu.Unlock()
+			e.users--
+			if e.users == 0 {
+				e.idleSince = time.Now()
+			}
+		})
+	}
+	return conn, port, release, nil
+}
+
+// connectLocked returns e's connection, dialing if it is gone. Caller holds e.mu.
+func (p *pool) connectLocked(ctx context.Context, name string, e *entry) (*quic.Conn, int, error) {
 	if e.conn != nil && e.conn.Context().Err() == nil {
 		return e.conn, e.defaultPort, nil
 	}
@@ -87,7 +137,43 @@ func (p *pool) get(ctx context.Context, name string) (*quic.Conn, int, error) {
 	}
 	log.Printf("connected to %q via %s%s", name, via, buildinfo.Mismatch("exporter", ver, "importer"))
 	e.conn, e.defaultPort, e.peerVersion = conn, port, ver
+	if e.users == 0 {
+		e.idleSince = time.Now()
+	}
 	return conn, port, nil
+}
+
+// sweepIdle closes peer connections that have carried nothing for peerIdle.
+func (p *pool) sweepIdle(ctx context.Context) {
+	t := time.NewTicker(idleSweep)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		p.sweepOnce(peerIdle)
+	}
+}
+
+// sweepOnce closes every connection that has been idle for at least d.
+func (p *pool) sweepOnce(d time.Duration) {
+	p.mu.Lock()
+	ents := make(map[string]*entry, len(p.ents))
+	for name, e := range p.ents {
+		ents[name] = e
+	}
+	p.mu.Unlock()
+	for name, e := range ents {
+		e.mu.Lock()
+		live := e.conn != nil && e.conn.Context().Err() == nil
+		if live && e.users == 0 && !e.idleSince.IsZero() && time.Since(e.idleSince) >= d {
+			log.Printf("connection to %q closed after %s idle", name, d)
+			e.conn.CloseWithError(0, "idle")
+		}
+		e.mu.Unlock()
+	}
 }
 
 // annotate appends the exporter/client versions to an error from exporter
@@ -108,22 +194,33 @@ func (p *pool) annotate(name string, err error) error {
 	return err
 }
 
-// udpMux returns the UDP multiplexer for the live connection to name.
-func (p *pool) udpMux(ctx context.Context, name string) (*tunnel.UDPMux, error) {
-	conn, _, err := p.get(ctx, name)
+// openUDP opens a UDP flow to target on exporter name. The flow holds the
+// connection (see lease) until it ends.
+func (p *pool) openUDP(ctx context.Context, name, target string, recv func([]byte)) (*tunnel.UDPFlow, error) {
+	conn, _, release, err := p.lease(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	p.mu.Lock()
-	e := p.ents[name]
-	p.mu.Unlock()
+	e := p.entry(name)
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if e.udp == nil || e.udpConn != conn {
 		e.udp = tunnel.NewUDPMux(conn)
 		e.udpConn = conn
 	}
-	return e.udp, nil
+	mux := e.udp
+	e.mu.Unlock()
+	octx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	f, err := mux.Open(octx, target, recv)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	go func() {
+		<-f.Done()
+		release()
+	}()
+	return f, nil
 }
 
 // dropAll closes every peer connection so the next use redials; called when
@@ -215,12 +312,13 @@ func addrSet(addrs []string) map[string]bool {
 // open returns a resumable session to target on exporter name. If the
 // tunnel is lost, the session reconnects on its own for up to resume.Grace.
 func (p *pool) open(ctx context.Context, name, target string) (*resume.Session, error) {
-	conn, _, err := p.get(ctx, name)
+	conn, _, release, err := p.lease(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	st, err := conn.OpenStreamSync(ctx)
 	if err != nil {
+		release()
 		return nil, err
 	}
 	if target == "" {
@@ -231,10 +329,13 @@ func (p *pool) open(ctx context.Context, name, target string) (*resume.Session, 
 	if err != nil {
 		st.CancelRead(0)
 		st.Close()
+		release()
 		return nil, p.annotate(name, fmt.Errorf("%s: %w", name, err))
 	}
+	sess.OnClose = func(*resume.Session) { release() }
 	sess.OnDetach = func(s *resume.Session) { p.resumeSession(name, s) }
 	if err := sess.Attach(st, rd, 0); err != nil {
+		sess.Close() // nobody will ever read it; this also releases the lease
 		return nil, err
 	}
 	return sess, nil
@@ -377,6 +478,7 @@ func newPool(nf *nodeFlags) (*pool, func(), error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	p := &pool{node: node, linkKey: *nf.linkKey, ctx: ctx, ents: map[string]*entry{}, resuming: map[string]bool{}}
 	go p.watchNetwork(ctx)
+	go p.sweepIdle(ctx)
 	return p, func() { stop(); node.Close() }, nil
 }
 
@@ -624,15 +726,8 @@ func serveUDPForward(ctx context.Context, p *pool, name, target string, uc *net.
 		}
 		mu.Unlock()
 		if f == nil {
-			mux, err := p.udpMux(ctx, name)
-			if err != nil {
-				log.Printf("udp %s: %v", key, err)
-				continue
-			}
-			octx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			dst := src
-			f, err = mux.Open(octx, target, func(pl []byte) { uc.WriteToUDP(pl, dst) })
-			cancel()
+			f, err = p.openUDP(ctx, name, target, func(pl []byte) { uc.WriteToUDP(pl, dst) })
 			if err != nil {
 				log.Printf("udp %s: %v", key, err)
 				continue
