@@ -209,24 +209,32 @@ func GenerateKey() string {
 }
 
 // AllowList is a concurrency-safe set of fingerprints with expiry, used by
-// exporters to admit exactly the clients the server introduced.
+// exporters to admit exactly the importers the server introduced.
 type AllowList struct {
-	mu  sync.Mutex
-	ttl time.Duration
-	m   map[string]time.Time
+	mu    sync.Mutex
+	ttl   time.Duration
+	m     map[string]time.Time
+	added chan struct{} // closed and replaced on every Add
 }
 
 func NewAllowList(ttl time.Duration) *AllowList {
-	return &AllowList{ttl: ttl, m: map[string]time.Time{}}
+	return &AllowList{ttl: ttl, m: map[string]time.Time{}, added: make(chan struct{})}
 }
 
 func (a *AllowList) Add(fp string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.m[NormalizeFP(fp)] = time.Now().Add(a.ttl)
+	close(a.added)
+	a.added = make(chan struct{})
 }
 
 func (a *AllowList) Allowed(fp string) bool {
+	ok, _ := a.check(fp)
+	return ok
+}
+
+func (a *AllowList) check(fp string) (bool, <-chan struct{}) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := time.Now()
@@ -236,5 +244,35 @@ func (a *AllowList) Allowed(fp string) bool {
 		}
 	}
 	_, ok := a.m[NormalizeFP(fp)]
-	return ok
+	return ok, a.added
+}
+
+// IntroductionGrace is how long an exporter gives the server's introduction
+// to arrive after an unknown importer has already started its handshake.
+//
+// The server tells the exporter about an importer and hands the importer the
+// exporter's addresses at the same moment, so an importer on the same LAN can
+// finish its handshake before the introduction has crossed the internet (a
+// Wi-Fi exporter in power save adds tens of milliseconds). Rejecting the
+// certificate at that point costs the importer a whole round through the
+// server; waiting a little costs nothing.
+var IntroductionGrace = 3 * time.Second
+
+// Await is Allowed with patience: when fp is not on the list it waits up to
+// IntroductionGrace for an Add to put it there. It is meant as the
+// ServerConfig callback and therefore blocks only the handshake asking.
+func (a *AllowList) Await(fp string) bool {
+	deadline := time.NewTimer(IntroductionGrace)
+	defer deadline.Stop()
+	for {
+		ok, added := a.check(fp)
+		if ok {
+			return true
+		}
+		select {
+		case <-added:
+		case <-deadline.C:
+			return false
+		}
+	}
 }

@@ -193,7 +193,7 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 	defer node.Close()
 
 	allow := ident.NewAllowList(5 * time.Minute)
-	ln, err := node.Listen(allow.Allowed)
+	ln, err := node.Listen(allow.Await)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 		allow.Add(m.PeerFingerprint)
 		go node.Punch(ctx, m.Session, m.Candidates, 10*time.Second)
 		go func() {
-			conn, err := node.AcceptRelay(ctx, node.RelayAddr(m.RelayPort), m.Session, allow.Allowed)
+			conn, err := node.AcceptRelay(ctx, node.RelayAddr(m.RelayPort), m.Session, allow.Await)
 			if err != nil {
 				// A deadline just means the client did not come through the relay.
 				if ctx.Err() == nil && !errors.Is(err, context.DeadlineExceeded) {

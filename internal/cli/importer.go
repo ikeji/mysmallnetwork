@@ -133,7 +133,7 @@ func (p *pool) connectLocked(ctx context.Context, name string, e *entry) (*quic.
 	}
 	port, ver, err := peer.AuthenticateAsClient(ctx, conn, key)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%s: %w", name, err)
+		return nil, 0, fmt.Errorf("%s via %s: %w", name, via, err)
 	}
 	log.Printf("connected to %q via %s%s", name, via, buildinfo.Mismatch("exporter", ver, "importer"))
 	e.conn, e.defaultPort, e.peerVersion = conn, port, ver
