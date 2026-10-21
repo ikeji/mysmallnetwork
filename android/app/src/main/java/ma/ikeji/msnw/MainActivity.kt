@@ -163,10 +163,15 @@ class MainActivity : AppCompatActivity() {
         targetEdit.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { openTarget(); true } else false }
     }
 
-    /** Fills a history list with one row per entry: tap opens, × removes it. */
-    private fun fillHistory(container: LinearLayout, key: String, open: (String) -> Unit) {
+    /**
+     * Fills a history list with one row per entry: tap opens, × removes it.
+     * Only the first [HISTORY_SHOWN] entries are listed until "more" is tapped.
+     */
+    private fun fillHistory(container: LinearLayout, key: String, expanded: Boolean = false, open: (String) -> Unit) {
         container.removeAllViews()
-        Env.history(this, key).forEach { item ->
+        val all = Env.history(this, key)
+        val shown = if (expanded) all else all.take(HISTORY_SHOWN)
+        shown.forEach { item ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             val label = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
                 text = item
@@ -178,11 +183,20 @@ class MainActivity : AppCompatActivity() {
             val del = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
                 text = "×"
                 setTextColor(Color.parseColor("#ff8080"))
-                setOnClickListener { Env.removeHistory(this@MainActivity, key, item); fillHistory(container, key, open) }
+                setOnClickListener { Env.removeHistory(this@MainActivity, key, item); fillHistory(container, key, expanded, open) }
             }
             row.addView(label, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
             row.addView(del, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             container.addView(row, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        if (all.size > shown.size) {
+            val more = Button(this, null, android.R.attr.borderlessButtonStyle).apply {
+                text = "more (${all.size - shown.size})"
+                isAllCaps = false
+                setTextColor(Color.parseColor("#80c0ff"))
+                setOnClickListener { fillHistory(container, key, true, open) }
+            }
+            container.addView(more, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
 
@@ -679,6 +693,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val URL_HISTORY = "url_history"
         const val TARGET_HISTORY = "target_history"
+        const val HISTORY_SHOWN = 5
         /** Finger travel that makes a flick, in dp. */
         const val FLICK_STEP_DP = 24
     }
