@@ -315,6 +315,11 @@ msnw export -n exit --all                           # forward to any host:port (
 a range `lo-hi` / `host:lo-hi`. `--all` allows any destination on both
 protocols; combined with `-t`, the first `-t` is the default target.
 
+To keep an exporter running across reboots, see
+[examples/msnw-export.service](examples/msnw-export.service): a systemd unit
+that publishes sshd and the mosh UDP ports under the host name, with the link
+key read from `/etc/msnw/env`. The install steps are in its comments.
+
 ### wrap-export
 
 Run a command and publish the port it listens on, for as long as it runs:

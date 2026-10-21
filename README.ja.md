@@ -301,6 +301,11 @@ msnw export -n exit --all                           # 任意の host:port へ中
 `lo-hi` / `host:lo-hi` のポート範囲。
 `--all` は両プロトコルで任意の宛先を許し、`-t` と併用するとその先頭が既定ターゲットになる。
 
+再起動後も exporter を動かしておくには
+[examples/msnw-export.service](examples/msnw-export.service) を参照。sshd と
+mosh 用の UDP ポートをホスト名で公開する systemd ユニットで、リンクキーは
+`/etc/msnw/env` から読む。導入手順はファイル先頭のコメントにある。
+
 ### wrap-export
 
 コマンドを起動し、それが待ち受けるポートを、コマンドが動いている間だけ公開する:

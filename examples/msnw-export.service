@@ -1,0 +1,51 @@
+# systemd unit for "msnw export": publish this machine's sshd (and the UDP
+# ports mosh-server uses) under the host name, and keep it running across
+# reboots.
+#
+# Equivalent to:
+#     msnw export -key $MSNW_KEY -n $(hostname) -t 22 -u 60001-60999
+#
+# Install:
+#     sudo install -m 755 msnw /usr/local/bin/msnw
+#     sudo install -d -m 700 /etc/msnw
+#     printf 'MSNW_KEY=%s\n' "$(msnw gen-key)" | sudo tee /etc/msnw/env   # or paste your key
+#     sudo chmod 600 /etc/msnw/env
+#     sudo cp msnw-export.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now msnw-export
+#     journalctl -u msnw-export -f          # wait for: registered "<hostname>"
+#
+# The link key lives in /etc/msnw/env, not here: unit files are world-readable.
+# The same file may also set MSNW_SERVER, MSNW_SERVER_KEY and MSNW_SERVER_FP.
+# To publish under another name or other ports, edit ExecStart (%H is the
+# host name, the same as $(hostname)).
+
+[Unit]
+Description=msnw exporter (ssh + mosh under the host name)
+Documentation=https://github.com/ikeji/mysmallnetwork
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/msnw/env
+ExecStart=/usr/local/bin/msnw export -n %H -t 22 -u 60001-60999
+Restart=always
+RestartSec=5
+
+# The exporter only makes outbound connections (to the server, to peers, and
+# to the exported ports on localhost), so it needs no privileges or writable
+# paths at all.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target
