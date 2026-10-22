@@ -8,6 +8,7 @@ package peer
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -26,16 +27,26 @@ import (
 	"github.com/ikeji/mysmallnetwork/internal/proto"
 )
 
-// Node owns the shared transport and the control connection.
+// Node owns the shared transport and one control connection per rendezvous
+// server. Every server is used at the same time: an exporter registers with
+// all of them and an importer asks all of them, so one server being down
+// costs nothing but a log line.
 type Node struct {
 	Ident     *ident.Identity
 	Transport *quic.Transport
-	Server    *net.UDPAddr
-	ServerFP  string
-	ServerKey string // optional gate for the rendezvous server
+	ServerKey string // optional gate for the rendezvous servers
 	Verbose   bool
 
+	servers []*server
+	pins    map[string]bool // accepted server fingerprints; empty = not verified
+}
+
+// server is one rendezvous server and its control connection.
+type server struct {
+	addr string // host:port as configured
+
 	mu   sync.Mutex
+	ip   *net.UDPAddr // last resolution of addr (nil until it succeeds)
 	ctrl *quic.Conn
 }
 
@@ -48,23 +59,61 @@ type PeerInfo struct {
 	Relay       *net.UDPAddr
 }
 
-// New resolves the server address and binds the shared UDP socket.
-func New(id *ident.Identity, server, serverKey, serverFP string, port int) (*Node, error) {
-	sa, err := net.ResolveUDPAddr("udp", server)
-	if err != nil {
-		return nil, fmt.Errorf("server address: %w", err)
+// New binds the shared UDP socket and resolves the servers. A server whose
+// name does not resolve is kept and resolved again on every dial; only when
+// none of them resolves is that an error.
+func New(id *ident.Identity, servers []string, serverKey string, serverFPs []string, port int) (*Node, error) {
+	if len(servers) == 0 {
+		return nil, errors.New("no rendezvous server configured")
+	}
+	n := &Node{Ident: id, ServerKey: serverKey, pins: map[string]bool{}}
+	for _, fp := range serverFPs {
+		if fp = ident.NormalizeFP(fp); fp != "" {
+			n.pins[fp] = true
+		}
+	}
+	var firstErr error
+	resolved := 0
+	for _, a := range servers {
+		s := &server{addr: a}
+		if ip, err := net.ResolveUDPAddr("udp", a); err == nil {
+			s.ip = ip
+			resolved++
+		} else {
+			log.Printf("server %s: %v (will retry)", a, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		n.servers = append(n.servers, s)
+	}
+	if resolved == 0 {
+		return nil, fmt.Errorf("server address: %w", firstErr)
 	}
 	uc, err := net.ListenUDP("udp", &net.UDPAddr{Port: port})
 	if err != nil {
 		return nil, err
 	}
-	return &Node{
-		Ident:     id,
-		Transport: &quic.Transport{Conn: uc},
-		Server:    sa,
-		ServerFP:  serverFP,
-		ServerKey: serverKey,
-	}, nil
+	n.Transport = &quic.Transport{Conn: uc}
+	return n, nil
+}
+
+// Servers lists the configured server addresses, in order.
+func (n *Node) Servers() []string {
+	out := make([]string, len(n.servers))
+	for i, s := range n.servers {
+		out[i] = s.addr
+	}
+	return out
+}
+
+func (n *Node) find(addr string) *server {
+	for _, s := range n.servers {
+		if s.addr == addr {
+			return s
+		}
+	}
+	return nil
 }
 
 func (n *Node) logf(format string, args ...any) {
@@ -82,19 +131,29 @@ func (n *Node) Close() error { return n.Transport.Close() }
 // LocalCandidates are this host's LAN addresses on the shared port.
 func (n *Node) LocalCandidates() []string { return netutil.LocalAddrs(n.Port()) }
 
-// RouteSource is the local address the kernel would use to reach the server
+// RouteSource is the local address the kernel would use to reach a server
 // right now ("" if there is no route). It is a cheap probe (a connected UDP
 // socket sends nothing) and the most reliable sign of a network change: it
 // flips when the default network moves, including on Android where listing
 // interfaces is not permitted and a new network appears without the old one
-// going away first.
+// going away first. The first server with a known address is probed; no DNS
+// is done here.
 func (n *Node) RouteSource() string {
-	c, err := net.DialUDP("udp", nil, n.Server)
-	if err != nil {
-		return ""
+	for _, s := range n.servers {
+		s.mu.Lock()
+		ip := s.ip
+		s.mu.Unlock()
+		if ip == nil {
+			continue
+		}
+		c, err := net.DialUDP("udp", nil, ip)
+		if err != nil {
+			continue
+		}
+		defer c.Close()
+		return c.LocalAddr().(*net.UDPAddr).IP.String()
 	}
-	defer c.Close()
-	return c.LocalAddr().(*net.UDPAddr).IP.String()
+	return ""
 }
 
 // WatchRoute polls RouteSource every 2 seconds and calls onChange when it
@@ -148,28 +207,55 @@ func peerConfig() *quic.Config {
 	}
 }
 
-// Control returns a live control connection to the server, dialing if needed.
-func (n *Node) Control(ctx context.Context) (*quic.Conn, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.ctrl != nil && n.ctrl.Context().Err() == nil {
-		return n.ctrl, nil
+// serverTLS is the TLS config for dialing a server: pinned to the accepted
+// fingerprints when any are configured, otherwise unverified (the server key
+// still authenticates us, and a fake server can only refuse to introduce).
+func (n *Node) serverTLS() *tls.Config {
+	conf := n.Ident.ClientConfig("")
+	if len(n.pins) > 0 {
+		conf.VerifyPeerCertificate = ident.VerifyPinned(func(fp string) bool { return n.pins[fp] })
 	}
-	conn, err := n.Transport.Dial(ctx, n.Server, n.Ident.ClientConfig(n.ServerFP), ctrlConfig())
+	return conf
+}
+
+// control returns a live control connection to s, dialing (and resolving
+// the name again) if needed.
+func (n *Node) control(ctx context.Context, s *server) (*quic.Conn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctrl != nil && s.ctrl.Context().Err() == nil {
+		return s.ctrl, nil
+	}
+	ip, err := net.ResolveUDPAddr("udp", s.addr)
 	if err != nil {
-		return nil, fmt.Errorf("dial server %s: %w", n.Server, err)
+		if s.ip == nil {
+			return nil, fmt.Errorf("resolve %s: %w", s.addr, err)
+		}
+		ip = s.ip // DNS hiccup: keep the last known address
 	}
-	n.ctrl = conn
+	s.ip = ip
+	conn, err := n.Transport.Dial(ctx, ip, n.serverTLS(), ctrlConfig())
+	if err != nil {
+		return nil, fmt.Errorf("dial %s: %w", s.addr, err)
+	}
+	s.ctrl = conn
 	return conn, nil
 }
 
-// DropControl forgets the control connection so the next call redials.
+// dropControl forgets s's control connection so the next call redials.
+func (n *Node) dropControl(s *server) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ctrl != nil {
+		s.ctrl.CloseWithError(0, "reconnect")
+		s.ctrl = nil
+	}
+}
+
+// DropControl forgets every control connection so the next calls redial.
 func (n *Node) DropControl() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	if n.ctrl != nil {
-		n.ctrl.CloseWithError(0, "reconnect")
-		n.ctrl = nil
+	for _, s := range n.servers {
+		n.dropControl(s)
 	}
 }
 
@@ -177,10 +263,11 @@ func (n *Node) authFor(conn *quic.Conn) (string, error) {
 	return ident.AuthTag(n.ServerKey, ident.LabelServer, conn.ConnectionState().TLS)
 }
 
-// RelayAddr builds the relay address from the server host and the port the
-// server advertised.
-func (n *Node) RelayAddr(port int) *net.UDPAddr {
-	return &net.UDPAddr{IP: n.Server.IP, Port: port, Zone: n.Server.Zone}
+// relayAddr is the relay of the server behind ctrl: the address the control
+// connection went to, on the port the server advertised.
+func relayAddr(ctrl *quic.Conn, port int) *net.UDPAddr {
+	ra := ctrl.RemoteAddr().(*net.UDPAddr)
+	return &net.UDPAddr{IP: ra.IP, Port: port, Zone: ra.Zone}
 }
 
 // Punch sends hole-punching packets to every candidate until ctx ends or
@@ -243,10 +330,44 @@ func relayHello(ctx context.Context, tr *quic.Transport, relay *net.UDPAddr, ses
 
 // ---- client side -----------------------------------------------------------
 
-// Lookup asks the server how to reach exporter name within the namespace of
-// linkKey. The server only sees HashName(linkKey, name).
+// Lookup asks every server at once how to reach exporter name within the
+// namespace of linkKey and returns the first answer; a server that is down
+// only adds to the error when none of them knows the name. The servers only
+// see HashName(linkKey, name).
 func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, error) {
-	ctrl, err := n.Control(ctx)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		info *PeerInfo
+		err  error
+	}
+	ch := make(chan result, len(n.servers))
+	for _, s := range n.servers {
+		go func(s *server) {
+			info, err := n.lookupAt(ctx, s, linkKey, name)
+			if err != nil {
+				err = fmt.Errorf("%s: %w", s.addr, err)
+			}
+			ch <- result{info, err}
+		}(s)
+	}
+	var errs []string
+	for range n.servers {
+		r := <-ch
+		if r.err == nil {
+			return r.info, nil
+		}
+		n.logf("lookup %q: %v", name, r.err)
+		errs = append(errs, r.err.Error())
+	}
+	return nil, errors.New(strings.Join(errs, "; "))
+}
+
+// lookupAt runs one lookup over s's control connection. Cancelling ctx
+// (because another server answered first) aborts it without touching a
+// healthy control connection.
+func (n *Node) lookupAt(ctx context.Context, s *server, linkKey, name string) (*PeerInfo, error) {
+	ctrl, err := n.control(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -256,10 +377,22 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	}
 	st, err := ctrl.OpenStreamSync(ctx)
 	if err != nil {
-		n.DropControl()
+		if ctx.Err() == nil {
+			n.dropControl(s)
+		}
 		return nil, err
 	}
 	defer st.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() { // a cancelled lookup must not sit in Read for its deadline
+		select {
+		case <-ctx.Done():
+			st.CancelRead(0)
+			st.CancelWrite(0)
+		case <-done:
+		}
+	}()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeConnect,
 		Version:     buildinfo.Version(),
@@ -274,7 +407,10 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {
-		n.DropControl()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		n.dropControl(s)
 		return nil, fmt.Errorf("server: %w", err)
 	}
 	switch m.Type {
@@ -284,7 +420,7 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 			Session:     m.Session,
 			Fingerprint: m.PeerFingerprint,
 			Candidates:  m.Candidates,
-			Relay:       n.RelayAddr(m.RelayPort),
+			Relay:       relayAddr(ctrl, m.RelayPort),
 		}, nil
 	case proto.TypeError:
 		return nil, errors.New(m.Error + buildinfo.Mismatch("server", m.Version, "importer"))
@@ -439,11 +575,15 @@ func (n *Node) learnFromPunches(ctx context.Context, session string, found func(
 
 // ---- exporter side ---------------------------------------------------------
 
-// Register announces HashName(linkKey, name) to the server and blocks,
-// invoking onIncoming for every client introduction, until the control
-// stream breaks.
-func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming func(*proto.Message)) error {
-	ctrl, err := n.Control(ctx)
+// Register announces HashName(linkKey, name) to the server at addr (one of
+// Servers) and blocks, invoking onIncoming for every client introduction
+// with the relay address of that server, until the control stream breaks.
+func (n *Node) Register(ctx context.Context, addr, linkKey, name string, onIncoming func(m *proto.Message, relay *net.UDPAddr)) error {
+	s := n.find(addr)
+	if s == nil {
+		return fmt.Errorf("unknown server %s", addr)
+	}
+	ctrl, err := n.control(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -453,7 +593,7 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 	}
 	st, err := ctrl.OpenStreamSync(ctx)
 	if err != nil {
-		n.DropControl()
+		n.dropControl(s)
 		return err
 	}
 	defer st.Close()
@@ -471,14 +611,14 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {
-		n.DropControl()
+		n.dropControl(s)
 		return fmt.Errorf("server: %w", err)
 	}
 	st.SetReadDeadline(time.Time{})
 	if m.Type != proto.TypeOK {
 		return fmt.Errorf("register rejected: %s%s", m.Error, buildinfo.Mismatch("server", m.Version, "exporter"))
 	}
-	log.Printf("registered %q at %s (public %s)%s", name, n.Server, m.Reflexive, buildinfo.Mismatch("server", m.Version, "exporter"))
+	log.Printf("registered %q at %s (public %s)%s", name, s.addr, m.Reflexive, buildinfo.Mismatch("server", m.Version, "exporter"))
 
 	// The blocking Read below does not observe ctx; unblock it on shutdown.
 	done := make(chan struct{})
@@ -487,7 +627,7 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 		select {
 		case <-ctx.Done():
 			st.CancelRead(0)
-			n.DropControl()
+			n.dropControl(s)
 		case <-done:
 		}
 	}()
@@ -495,7 +635,7 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 	for {
 		m, err := proto.Read(st)
 		if err != nil {
-			n.DropControl()
+			n.dropControl(s)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -503,7 +643,7 @@ func (n *Node) Register(ctx context.Context, linkKey, name string, onIncoming fu
 		}
 		switch m.Type {
 		case proto.TypeIncoming:
-			onIncoming(m)
+			onIncoming(m, relayAddr(ctrl, m.RelayPort))
 		case proto.TypeError:
 			return errors.New(m.Error)
 		}

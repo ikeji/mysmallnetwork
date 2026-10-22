@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -131,10 +132,8 @@ func Export(args []string) {
 	fs.Var(&tcpTargets, "t", "TCP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
 	fs.Var(&udpTargets, "u", "UDP target to export: [host:]port or [host:]lo-hi (repeatable; first is the default)")
 	all := fs.Bool("all", false, "let importers connect to any host:port (TCP and UDP) through this exporter")
-	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
+	sf := addServerFlags(fs)
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with importers (or $MSNW_KEY); required")
-	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
-	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	port := fs.Int("port", 0, "local UDP port to bind (0 = random)")
 	verbose := fs.Bool("v", false, "verbose logging")
 	fs.Parse(args)
@@ -160,22 +159,23 @@ func Export(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := serveExport(ctx, &exportOpts{server: *server, linkKey: *linkKey, serverKey: *serverKey,
-		serverFP: *serverFP, udpPort: *port, verbose: *verbose}, *name, pol); err != nil {
+	if err := serveExport(ctx, &exportOpts{servers: sf, linkKey: *linkKey, udpPort: *port, verbose: *verbose}, *name, pol); err != nil {
 		log.Fatal(err)
 	}
 }
 
 // exportOpts are the connection options of an exporter.
 type exportOpts struct {
-	server, linkKey, serverKey, serverFP string
-	udpPort                              int
-	verbose                              bool
+	servers *serverFlags
+	linkKey string
+	udpPort int
+	verbose bool
 }
 
-// serveExport publishes pol under name until ctx ends, re-registering with
-// the server whenever the control connection drops. Shared by "export" and
-// "wrap-export".
+// serveExport publishes pol under name until ctx ends. It registers with
+// every server at once and re-registers with each one whenever its control
+// connection drops, so importers find the name as long as one server is up.
+// Shared by "export" and "wrap-export".
 func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) error {
 	defaultPort := 0
 	if len(pol.tcp) > 0 {
@@ -185,7 +185,7 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 	if err != nil {
 		return err
 	}
-	node, err := peer.New(id, o.server, o.serverKey, o.serverFP, o.udpPort)
+	node, err := o.servers.newNode(id, o.udpPort)
 	if err != nil {
 		return err
 	}
@@ -201,12 +201,12 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 	go sessions.Run(ctx)
 	go acceptLoop(ctx, ln, pol, o.linkKey, defaultPort, sessions)
 
-	onIncoming := func(m *proto.Message) {
+	onIncoming := func(m *proto.Message, relay *net.UDPAddr) {
 		log.Printf("incoming importer %s… candidates=%v", m.PeerFingerprint[:12], m.Candidates)
 		allow.Add(m.PeerFingerprint)
 		go node.Punch(ctx, m.Session, m.Candidates, 10*time.Second)
 		go func() {
-			conn, err := node.AcceptRelay(ctx, node.RelayAddr(m.RelayPort), m.Session, allow.Await)
+			conn, err := node.AcceptRelay(ctx, relay, m.Session, allow.Await)
 			if err != nil {
 				// A deadline just means the client did not come through the relay.
 				if ctx.Err() == nil && !errors.Is(err, context.DeadlineExceeded) {
@@ -226,17 +226,32 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 		node.DropControl()
 	})
 
+	var wg sync.WaitGroup
+	for _, addr := range node.Servers() {
+		wg.Add(1)
+		go func(addr string) {
+			defer wg.Done()
+			registerLoop(ctx, node, addr, o.linkKey, name, onIncoming)
+		}(addr)
+	}
+	wg.Wait()
+	return nil
+}
+
+// registerLoop keeps name registered at one server until ctx ends, backing
+// off while the server is unreachable.
+func registerLoop(ctx context.Context, node *peer.Node, addr, linkKey, name string, onIncoming func(*proto.Message, *net.UDPAddr)) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := node.Register(ctx, o.linkKey, name, onIncoming)
+		err := node.Register(ctx, addr, linkKey, name, onIncoming)
 		if ctx.Err() != nil {
-			break
+			return
 		}
 		if time.Since(started) > time.Minute {
 			backoff = time.Second // it was working; this is a fresh outage
 		}
-		log.Printf("disconnected from server: %v; retrying in %s", err, backoff)
+		log.Printf("disconnected from %s: %v; retrying in %s", addr, err, backoff)
 		select {
 		case <-ctx.Done():
 		case <-time.After(backoff):
@@ -245,7 +260,6 @@ func serveExport(ctx context.Context, o *exportOpts, name string, pol *policy) e
 			backoff *= 2
 		}
 	}
-	return nil
 }
 
 func acceptLoop(ctx context.Context, ln *quic.Listener, pol *policy, linkKey string, defaultPort int, sessions *resume.Registry) {

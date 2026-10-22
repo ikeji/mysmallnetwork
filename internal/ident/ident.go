@@ -109,7 +109,9 @@ func NormalizeFP(s string) string {
 	return strings.ReplaceAll(s, ":", "")
 }
 
-func verifyPinned(allowed func(fp string) bool) func([][]byte, [][]*x509.Certificate) error {
+// VerifyPinned is a VerifyPeerCertificate that accepts a peer whose
+// public-key fingerprint allowed() admits.
+func VerifyPinned(allowed func(fp string) bool) func([][]byte, [][]*x509.Certificate) error {
 	return func(raw [][]byte, _ [][]*x509.Certificate) error {
 		if len(raw) == 0 {
 			return errors.New("ident: peer presented no certificate")
@@ -139,7 +141,7 @@ func (id *Identity) ClientConfig(expectedFP string) *tls.Config {
 	}
 	if expectedFP != "" {
 		want := NormalizeFP(expectedFP)
-		conf.VerifyPeerCertificate = verifyPinned(func(fp string) bool { return fp == want })
+		conf.VerifyPeerCertificate = VerifyPinned(func(fp string) bool { return fp == want })
 	}
 	return conf
 }
@@ -155,7 +157,7 @@ func (id *Identity) ServerConfig(allow func(fp string) bool) *tls.Config {
 	}
 	if allow != nil {
 		conf.ClientAuth = tls.RequireAnyClientCert
-		conf.VerifyPeerCertificate = verifyPinned(allow)
+		conf.VerifyPeerCertificate = VerifyPinned(allow)
 	}
 	return conf
 }

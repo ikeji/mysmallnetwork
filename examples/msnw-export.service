@@ -16,7 +16,8 @@
 #     journalctl -u msnw-export -f          # wait for: registered "<hostname>"
 #
 # The link key lives in /etc/msnw/env, not here: unit files are world-readable.
-# The same file may also set MSNW_SERVER, MSNW_SERVER_KEY and MSNW_SERVER_FP.
+# The same file may also set MSNW_SERVER (comma-separated host:port list),
+# MSNW_SERVER_KEY and MSNW_SERVER_FP (comma-separated fingerprints).
 # To publish under another name or other ports, edit ExecStart (%H is the
 # host name, the same as $(hostname)).
 

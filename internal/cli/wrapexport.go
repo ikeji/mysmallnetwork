@@ -29,10 +29,8 @@ func WrapExport(args []string) {
 	quietQUIC()
 	name := fs.String("n", "", "name to export under (required)")
 	port := fs.Int("p", -1, "port the command listens on; 0 = pick a free port (default: detect)")
-	server := fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)")
+	sf := addServerFlags(fs)
 	linkKey := fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with importers (or $MSNW_KEY); required")
-	serverKey := fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one")
-	serverFP := fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)")
 	udpPort := fs.Int("port", 0, "local UDP port to bind (0 = random)")
 	verbose := fs.Bool("v", false, "verbose logging")
 	fs.Parse(args)
@@ -123,8 +121,7 @@ func WrapExport(args []string) {
 	ectx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
-		done <- serveExport(ectx, &exportOpts{server: *server, linkKey: *linkKey, serverKey: *serverKey,
-			serverFP: *serverFP, udpPort: *udpPort, verbose: *verbose}, *name, pol)
+		done <- serveExport(ectx, &exportOpts{servers: sf, linkKey: *linkKey, udpPort: *udpPort, verbose: *verbose}, *name, pol)
 	}()
 
 	var code int

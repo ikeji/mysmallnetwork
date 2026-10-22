@@ -1,7 +1,7 @@
 // msnw: one binary with subcommands.
 //
-//	msnw server   [-server-key S] [-listen :4433] [-relay :4434] [-key file]
-//	msnw export   -key K -n NAME -t [host:]port [-t ...] [--all]
+//	msnw server   [-server-key S] [-listen :4433] [-relay :4434] [-identity file]
+//	msnw export   -key K -n NAME -t [host:]port [-t ...] [--all] [-s host:port ...]
 //	msnw wrap-export -key K -n NAME [-p PORT] -- COMMAND [ARGS...]
 //	msnw import   -key K -l [addr] NAME[:port]
 //	msnw connect  -key K NAME[:port]

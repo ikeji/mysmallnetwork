@@ -405,28 +405,23 @@ func (p *pool) tryResume(name string, s *resume.Session) error {
 	return s.Attach(st, rd, peerRecv)
 }
 
-// DefaultServer is the public rendezvous server used when -s / $MSNW_SERVER
-// is not given, so a downloaded binary works without running a server.
-const DefaultServer = "relay.ikeji.ma:4433"
-
 // nodeFlags are the connection options shared by client-side subcommands.
 type nodeFlags struct {
-	server, linkKey, serverKey, serverFP *string
-	port                                 *int
-	verbose                              *bool
-	logFile                              *string
-	logOpen                              bool
+	servers *serverFlags
+	linkKey *string
+	port    *int
+	verbose *bool
+	logFile *string
+	logOpen bool
 }
 
 func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
 	return &nodeFlags{
-		server:    fs.String("s", envOr("MSNW_SERVER", DefaultServer), "rendezvous server host:port (or $MSNW_SERVER)"),
-		linkKey:   fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required"),
-		serverKey: fs.String("server-key", os.Getenv("MSNW_SERVER_KEY"), "server key (or $MSNW_SERVER_KEY), if the server requires one"),
-		serverFP:  fs.String("server-fp", os.Getenv("MSNW_SERVER_FP"), "pin the server's sha256 fingerprint (or $MSNW_SERVER_FP)"),
-		port:      fs.Int("port", 0, "local UDP port to bind (0 = random)"),
-		verbose:   fs.Bool("v", false, "verbose logging"),
-		logFile:   fs.String("log", os.Getenv("MSNW_LOG"), "append log output to this file instead of stderr (or $MSNW_LOG)"),
+		servers: addServerFlags(fs),
+		linkKey: fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required"),
+		port:    fs.Int("port", 0, "local UDP port to bind (0 = random)"),
+		verbose: fs.Bool("v", false, "verbose logging"),
+		logFile: fs.String("log", os.Getenv("MSNW_LOG"), "append log output to this file instead of stderr (or $MSNW_LOG)"),
 	}
 }
 
@@ -450,10 +445,8 @@ func parseWithTrailingFlags(fs *flag.FlagSet, args []string) []string {
 // that child processes (ssh's ProxyCommand running "msnw connect") inherit
 // them without putting the key on a command line.
 func (nf *nodeFlags) exportEnv() {
-	os.Setenv("MSNW_SERVER", *nf.server)
+	nf.servers.exportEnv()
 	os.Setenv("MSNW_KEY", *nf.linkKey)
-	os.Setenv("MSNW_SERVER_KEY", *nf.serverKey)
-	os.Setenv("MSNW_SERVER_FP", *nf.serverFP)
 }
 
 // openLog redirects the standard logger to -log FILE (if given) and writes
@@ -489,7 +482,7 @@ func newPool(nf *nodeFlags) (*pool, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	node, err := peer.New(id, *nf.server, *nf.serverKey, *nf.serverFP, *nf.port)
+	node, err := nf.servers.newNode(id, *nf.port)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -838,11 +831,4 @@ func runSocks(ctx context.Context, p *pool, listen, def string) {
 
 func runHTTPProxy(ctx context.Context, p *pool, listen, def string) {
 	httpproxy.Serve(ctx, listenProxy(ctx, "http", listen, def), proxyDialer(p, def), log.Printf)
-}
-
-func envOr(k, d string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return d
 }
