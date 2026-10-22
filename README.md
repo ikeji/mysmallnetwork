@@ -59,7 +59,7 @@ Android: install `msnw-android-arm64.apk` from the same Releases page (see
 ```
 make            # static binary bin/msnw (CGO_ENABLED=0) with the server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, mosh, gen-key, version subcommands
 make test       # unit tests + the full NAT simulation matrix (make unit / make natsim / make roam individually)
-make cross      # linux/darwin/windows builds into bin/<os>-<arch>/
+make cross      # linux/darwin/windows/freebsd builds into bin/<os>-<arch>/
 ```
 
 Needs Go 1.26 or newer (a quic-go requirement). If you run `go build` yourself,
@@ -309,6 +309,9 @@ importer with `-server-fp` (repeatable or comma-separated, or
 `$MSNW_SERVER_FP`): a server is then accepted only if its fingerprint is one
 of those. The default servers' fingerprints are built into the binary (see
 `DefaultServers` in `internal/cli/servers.go`) and apply when no `-s` is given.
+[examples/msnw-server.service](examples/msnw-server.service) is a systemd unit
+that runs the server this way, with the key in `/var/lib/msnw`;
+[examples/msnw_server.rc](examples/msnw_server.rc) is the FreeBSD rc.d script.
 
 ### export
 

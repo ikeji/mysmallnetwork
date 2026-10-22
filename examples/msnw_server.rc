@@ -1,0 +1,73 @@
+#!/bin/sh
+#
+# FreeBSD rc.d script for "msnw server": run a rendezvous + relay server
+# with a persistent identity, the counterpart of msnw-server.service.
+#
+# Install (binary from the msnw-freebsd-amd64 release archive or
+# "make cross" on any machine):
+#     install -m 755 msnw /usr/local/bin/msnw
+#     install -m 555 msnw_server.rc /usr/local/etc/rc.d/msnw_server
+#     pw useradd msnw -d /nonexistent -s /usr/sbin/nologin -c "msnw server"
+#     sysrc msnw_server_enable=YES
+#     service msnw_server start
+#     grep fingerprint /var/log/messages          # sha256:... to pin
+#
+# The key is created on the first start in /var/db/msnw (owned by the msnw
+# user); back it up, because a new key means a new fingerprint. Allow UDP
+# 4433 and 4434 in pf/ipfw. To require a server key from nodes, put
+# MSNW_SERVER_KEY=... in /usr/local/etc/msnw/env (mode 600).
+#
+# rc.conf variables (sysrc):
+#     msnw_server_enable    YES to start at boot
+#     msnw_server_user      user to run as (default: msnw)
+#     msnw_server_identity  key file (default: /var/db/msnw/server.key)
+#     msnw_server_args      server flags (default: -listen :4433 -relay :4434)
+#     msnw_server_env_file  environment file, if present (default: /usr/local/etc/msnw/env)
+
+# PROVIDE: msnw_server
+# REQUIRE: NETWORKING syslogd
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=msnw_server
+rcvar=msnw_server_enable
+
+load_rc_config $name
+
+: ${msnw_server_enable:=NO}
+: ${msnw_server_user:=msnw}
+: ${msnw_server_identity:=/var/db/msnw/server.key}
+: ${msnw_server_args:=-listen :4433 -relay :4434}
+: ${msnw_server_env_file:=/usr/local/etc/msnw/env}
+
+# rc.subr runs the command as ${msnw_server_user} (su), so daemon(8) itself
+# runs unprivileged (no -u) and the pidfile must live in a directory that
+# user can write (created in prestart, which still runs as root).
+piddir=/var/run/msnw
+pidfile=${piddir}/server.pid
+procname=/usr/local/bin/msnw
+command=/usr/sbin/daemon
+# daemon(8) supervises msnw: -r restarts it when it exits, -S sends its log
+# lines to syslog (daemon.notice, i.e. /var/log/messages), -P keeps the
+# supervisor's pid so "service msnw_server stop" ends both. (rc.subr puts
+# ${msnw_server_flags} right after the command, i.e. into daemon's options,
+# which is why the server's own flags live in msnw_server_args instead.)
+command_args="-r -R 5 -S -P ${pidfile} \
+	${procname} server -identity ${msnw_server_identity} ${msnw_server_args}"
+
+start_precmd=msnw_server_prestart
+
+msnw_server_prestart()
+{
+	install -d -o "${msnw_server_user}" -g "${msnw_server_user}" -m 700 \
+		"$(dirname "${msnw_server_identity}")"
+	install -d -o "${msnw_server_user}" -g "${msnw_server_user}" -m 755 "${piddir}"
+	if [ -r "${msnw_server_env_file}" ]; then
+		set -a
+		. "${msnw_server_env_file}"
+		set +a
+	fi
+}
+
+run_rc_command "$1"

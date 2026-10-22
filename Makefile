@@ -47,7 +47,7 @@ roam: bin/msnw
 
 # Cross-compile for common targets into bin/<os>-<arch>/
 cross:
-	for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do \
+	for t in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64 freebsd/amd64; do \
 		GOOS=$${t%/*} GOARCH=$${t#*/} go build $(GOFLAGS) -o bin/$${t%/*}-$${t#*/}/ ./cmd/... || exit 1; \
 	done
 

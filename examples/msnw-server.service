@@ -1,0 +1,49 @@
+# systemd unit for "msnw server": run a rendezvous + relay server with a
+# persistent identity, so its fingerprint stays the same across restarts and
+# can be pinned by exporters and importers (-server-fp, or the DefaultServers
+# table for the public servers).
+#
+# Equivalent to:
+#     msnw server -identity /var/lib/msnw/server.key -listen :4433 -relay :4434
+#
+# Install:
+#     sudo install -m 755 msnw /usr/local/bin/msnw
+#     sudo cp msnw-server.service /etc/systemd/system/
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now msnw-server
+#     journalctl -u msnw-server | grep fingerprint     # sha256:... to pin
+#
+# Open UDP 4433 and 4434 in the firewall. The key is created on the first
+# start in /var/lib/msnw (StateDirectory, the only writable path); back it
+# up, because a new key means a new fingerprint. To require a server key
+# from nodes, put MSNW_SERVER_KEY=... in /etc/msnw/env (mode 600) and
+# uncomment EnvironmentFile.
+
+[Unit]
+Description=msnw rendezvous + relay server
+Documentation=https://github.com/ikeji/mysmallnetwork
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+#EnvironmentFile=/etc/msnw/env
+ExecStart=/usr/local/bin/msnw server -identity /var/lib/msnw/server.key -listen :4433 -relay :4434
+Restart=always
+RestartSec=5
+
+StateDirectory=msnw
+StateDirectoryMode=0700
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

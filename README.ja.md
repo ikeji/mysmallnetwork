@@ -56,7 +56,7 @@ Android は同じ Releases ページの `msnw-android-arm64.apk` を入れる([a
 ```
 make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, mosh, gen-key, version サブコマンド)
 make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
-make cross      # linux/darwin/windows 向けを bin/<os>-<arch>/ に生成
+make cross      # linux/darwin/windows/freebsd 向けを bin/<os>-<arch>/ に生成
 ```
 
 Go 1.26 以上(quic-go の要件)。`go build` を直接使うときは `CGO_ENABLED=0` を付けること。
@@ -292,6 +292,9 @@ UDP の 2 ポートを外から到達可能にしておく。`-identity` を指�
 または `$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる: フィンガープリントがそのどれかに
 一致するサーバーしか受け付けなくなる。既定サーバーのフィンガープリントはバイナリに
 埋め込んであり(`internal/cli/servers.go` の `DefaultServers`)、`-s` を指定しないときに使われる。
+[examples/msnw-server.service](examples/msnw-server.service) はこの形でサーバーを動かす
+systemd unit で、鍵は `/var/lib/msnw` に置く。FreeBSD 用の rc.d スクリプトは
+[examples/msnw_server.rc](examples/msnw_server.rc)。
 
 ### exporter
 
