@@ -93,16 +93,36 @@ object Env {
         entries.forEach { copyAssets(ctx, "$path/$it", File(dst, it)) }
     }
 
-    const val DEFAULT_SERVER = "relay.ikeji.ma:4433"
+    /**
+     * The public rendezvous servers and the sha256 fingerprints of their
+     * identities, the same table as DefaultServers in internal/cli/servers.go
+     * (msnw's own defaults are bypassed here because the names are resolved
+     * in the app, see resolvedServers). An empty fingerprint means the server
+     * is not verified.
+     */
+    val DEFAULT_SERVERS = listOf(
+        "relay0.ikeji.ma:4433" to "d61823b97116661825c109f1a2f848c477db7ffc483c92562a6fec42399b9bce",
+        "relay1.ikeji.ma:4433" to "f0696909d1fdd2a3049bbbf9ed497e2e7e3a8e6abdf8ccf6fdd8e52689441309",
+        "relay2.ikeji.ma:4433" to "2e2a584206a0824947e2037f1c1cc7eefc7978ad23f16f951f742e85eb80c285",
+    )
+
+    /** The configured servers (comma-separated in the preference), or the defaults. */
+    private fun configuredServers(ctx: Context): List<String> {
+        val pref = prefs(ctx).getString("server", "") ?: ""
+        val list = pref.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        return if (list.isEmpty()) DEFAULT_SERVERS.map { it.first } else list
+    }
 
     /**
-     * The rendezvous server as "ip:port". msnw is a static Go binary whose
-     * resolver needs /etc/resolv.conf, which Android does not have, so the
-     * name is resolved here with the system resolver. Blocking: call off the
-     * main thread. Falls back to the name if resolution fails.
+     * The rendezvous servers as "ip:port,ip:port,...". msnw is a static Go
+     * binary whose resolver needs /etc/resolv.conf, which Android does not
+     * have, so the names are resolved here with the system resolver.
+     * Blocking: call off the main thread. A name that does not resolve is
+     * passed as is.
      */
-    fun resolvedServer(ctx: Context): String {
-        val configured = prefs(ctx).getString("server", "")?.takeIf { it.isNotBlank() } ?: DEFAULT_SERVER
+    fun resolvedServers(ctx: Context): String = configuredServers(ctx).joinToString(",") { resolveServer(it) }
+
+    private fun resolveServer(configured: String): String {
         val i = configured.lastIndexOf(':')
         val host = if (i > 0 && !configured.startsWith("[")) configured.substring(0, i) else configured
         val port = if (i > 0) configured.substring(i + 1) else "4433"
@@ -115,6 +135,13 @@ object Env {
             Log.w("msnw", "cannot resolve $host: $e")
             configured
         }
+    }
+
+    /** The fingerprints to pin: only the defaults' when no server is configured. */
+    private fun serverFingerprints(ctx: Context): String {
+        val pref = prefs(ctx).getString("server", "") ?: ""
+        if (pref.isNotBlank()) return ""
+        return DEFAULT_SERVERS.map { it.second }.filter { it.isNotEmpty() }.joinToString(",")
     }
 
     /** Environment for msnw and the programs it spawns. Blocking (DNS); call off the main thread. */
@@ -132,7 +159,8 @@ object Env {
             "MSNW_DBCLIENT" to File(bin(ctx), "dbclient").absolutePath,
             "MSNW_LOG" to logFile(ctx).absolutePath,
         )
-        env["MSNW_SERVER"] = resolvedServer(ctx)
+        env["MSNW_SERVER"] = resolvedServers(ctx)
+        env["MSNW_SERVER_FP"] = serverFingerprints(ctx)
         return env
     }
 

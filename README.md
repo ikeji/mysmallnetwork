@@ -69,8 +69,8 @@ with an older glibc (`GLIBC_2.34' not found`).
 ## Examples
 
 Each example reaches a Linux box at linuxbox (`linuxbox`) from a laptop on the road. Both can sit
-behind NAT, and you do not need to run a server: the public server
-relay.ikeji.ma is the default. In every case:
+behind NAT, and you do not need to run a server: the public servers
+relay0/relay1/relay2.ikeji.ma are the default. In every case:
 
 - Put the `msnw` binary on both machines (see [Install](#install)). It does
   not have to be on PATH.
@@ -284,9 +284,14 @@ There are two keys, both shared secrets:
   keeps strangers off your server. If the server is started without one,
   anyone may use it.
 
-Exporter and importer default to the public server `relay.ikeji.ma:4433` (no
-server key), so a downloaded binary plus a link key is all you need. To use
-your own server, point at it with `-s host:port` (or `$MSNW_SERVER`).
+Exporter and importer default to the public servers `relay0.ikeji.ma:4433`,
+`relay1.ikeji.ma:4433` and `relay2.ikeji.ma:4433` (no server key), so a
+downloaded binary plus a link key is all you need. Every server is used at
+the same time: an exporter registers with all of them and an importer asks
+all of them and takes the first answer, so one server being down costs
+nothing. To use your own server(s), list them with `-s host:port` (repeatable,
+or comma-separated; or `$MSNW_SERVER=a:4433,b:4433`). Each extra server costs
+an idle exporter about 20 MB of traffic a month.
 
 Every command below except `server` takes the link key as `-key LINKKEY` or
 from `$MSNW_KEY`; the examples assume the environment variable and omit it.
@@ -300,7 +305,10 @@ msnw server [-server-key S] [-listen :4433] [-relay :4434] [-identity server.key
 Both UDP ports must be reachable from outside. With `-identity` the private key is
 saved so the fingerprint stays the same across restarts; the
 `fingerprint: sha256:...` printed at startup can be pinned by exporter and
-importer with `-server-fp` (or `$MSNW_SERVER_FP`).
+importer with `-server-fp` (repeatable or comma-separated, or
+`$MSNW_SERVER_FP`): a server is then accepted only if its fingerprint is one
+of those. The default servers' fingerprints are built into the binary (see
+`DefaultServers` in `internal/cli/servers.go`) and apply when no `-s` is given.
 
 ### export
 
@@ -631,7 +639,8 @@ together with `mosh-client` and dropbear built with the NDK. See
 
 - The server certificate is not verified by default. Landing on a fake server
   leaks nothing (the peers just fail to connect), but to rule out disruption,
-  pin the server with `-identity` on the server side and `-server-fp` on the nodes.
+  pin the server with `-identity` on the server side and `-server-fp` on the nodes
+  (the default servers are pinned by the binary).
 - On Linux, quic-go warns when the UDP receive buffer is small. For high
   throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
 - For debugging, `MSNW_FORCE_RELAY=1` makes the importer skip direct paths and

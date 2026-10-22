@@ -56,8 +56,9 @@ into the APK. arm64-v8a only for now.
 
 - msnw is the same static (CGO_ENABLED=0) binary as on other platforms. Its
   pure-Go resolver reads /etc/resolv.conf, which Android lacks, so the app
-  resolves the rendezvous server with the system resolver and passes the IP
-  in `MSNW_SERVER`. Nothing else in msnw needs DNS. (An Android-specific
+  resolves the rendezvous servers with the system resolver and passes their
+  IPs in `MSNW_SERVER` (and the default servers' fingerprints in
+  `MSNW_SERVER_FP`). Nothing else in msnw needs DNS. (An Android-specific
   cgo build with GOOS=android would remove this step if it is ever needed.)
 
 The app opens on the "+" screen (also reached from the tab strip): type a URL

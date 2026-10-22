@@ -20,7 +20,9 @@ type DefaultServer struct {
 // $MSNW_SERVER is given, so a downloaded binary works without running a
 // server. Nodes use all of them at once, so any one of them may be down.
 var DefaultServers = []DefaultServer{
-	{Addr: "relay.ikeji.ma:4433", FP: ""},
+	{Addr: "relay0.ikeji.ma:4433", FP: "d61823b97116661825c109f1a2f848c477db7ffc483c92562a6fec42399b9bce"},
+	{Addr: "relay1.ikeji.ma:4433", FP: "f0696909d1fdd2a3049bbbf9ed497e2e7e3a8e6abdf8ccf6fdd8e52689441309"},
+	{Addr: "relay2.ikeji.ma:4433", FP: "2e2a584206a0824947e2037f1c1cc7eefc7978ad23f16f951f742e85eb80c285"},
 }
 
 // listFlag is a repeatable flag whose values may also be comma-separated,

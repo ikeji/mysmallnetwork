@@ -66,7 +66,7 @@ cgo 付きでビルドすると libc を動的リンクし、古い glibc のホ
 ## 使用例
 
 どの例も、外出先のノート PC(`laptop`)から自宅の Linux 機(`linuxbox`)に届かせる。どちらも NAT の奥にいてよく、
-サーバーを用意する必要はない(公開サーバー relay.ikeji.ma を既定で使う)。共通の準備:
+サーバーを用意する必要はない(公開サーバー relay0/relay1/relay2.ikeji.ma を既定で使う)。共通の準備:
 
 - 両方の PC に `msnw` バイナリを置く(「インストール」の節を参照)。PATH を通す必要はない。
 - リンクキーを決めて両方で同じ文字列を使う。これを知っている人だけが繋がれるので、
@@ -270,9 +270,12 @@ msnw http-proxy      # 127.0.0.1:8080 で待つ
 - **サーバーキー** `-server-key`(`$MSNW_SERVER_KEY`): server を勝手に使われないための入場券。
   server 側で未設定なら誰でも使える。
 
-exporter / importer は既定で公開サーバー `relay.ikeji.ma:4433`(サーバーキー無し)を使うので、
-バイナリを落としてリンクキーを決めればすぐ使える。自前のサーバーを使うときは
-`-s host:port`(または `$MSNW_SERVER`)で指す。
+exporter / importer は既定で公開サーバー `relay0.ikeji.ma:4433`、`relay1.ikeji.ma:4433`、
+`relay2.ikeji.ma:4433`(サーバーキー無し)を使うので、バイナリを落としてリンクキーを決めれば
+すぐ使える。サーバーは全部同時に使う: exporter は全サーバーに登録し、importer は全サーバーに
+同時に問い合わせて最初の返事を使うので、1 台落ちていても何も起きない。自前のサーバーを
+使うときは `-s host:port`(繰り返し可、カンマ区切りも可。または `$MSNW_SERVER=a:4433,b:4433`)
+で指す。サーバー 1 台につき、待機中の exporter の通信量が月 20 MB ほど増える。
 
 以下のコマンドは `server` 以外すべてリンクキーを `-key LINKKEY` か `$MSNW_KEY` で受け取る。
 例では環境変数にあるものとして省略する。
@@ -285,8 +288,10 @@ msnw server [-server-key S] [-listen :4433] [-relay :4434] [-identity server.key
 
 UDP の 2 ポートを外から到達可能にしておく。`-identity` を指定すると鍵を保存して
 フィンガープリントが再起動をまたいで固定される。起動時に表示される
-`fingerprint: sha256:...` を exporter / importer の `-server-fp`(または
-`$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる。
+`fingerprint: sha256:...` を exporter / importer の `-server-fp`(繰り返し可、カンマ区切りも可。
+または `$MSNW_SERVER_FP`)に渡すとサーバーをピン留めできる: フィンガープリントがそのどれかに
+一致するサーバーしか受け付けなくなる。既定サーバーのフィンガープリントはバイナリに
+埋め込んであり(`internal/cli/servers.go` の `DefaultServers`)、`-s` を指定しないときに使われる。
 
 ### exporter
 
@@ -574,7 +579,8 @@ dropbear を同梱している。[android/README.md](android/README.md) を参�
 ## 注意
 
 - 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
-  漏れるものは無いが、妨害を避けたいなら server を `-identity` で鍵固定し `-server-fp` でピン留めする。
+  漏れるものは無いが、妨害を避けたいなら server を `-identity` で鍵固定し `-server-fp` でピン留めする
+  (既定サーバーはバイナリがピン留めしている)。
 - Linux で UDP 受信バッファが小さいと quic-go が警告する。高スループットが要るなら
   `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
 - デバッグ用に `MSNW_FORCE_RELAY=1` で importer を直結せずリレーのみにできる。

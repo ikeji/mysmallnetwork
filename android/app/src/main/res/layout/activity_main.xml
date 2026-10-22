@@ -58,7 +58,7 @@
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="24dp" android:text="Settings" android:textColor="#7fd1ff" android:textSize="16sp"/>
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Link key (shared with the exporter)" android:textColor="#cccccc"/>
             <EditText android:id="@+id/prefKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textPassword" android:textColor="#ffffff"/>
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rendezvous server (blank = relay.ikeji.ma:4433)" android:textColor="#cccccc"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rendezvous servers, comma-separated (blank = relay0/relay1/relay2.ikeji.ma:4433)" android:textColor="#cccccc"/>
             <EditText android:id="@+id/prefServer" android:layout_width="match_parent" android:layout_height="wrap_content" android:inputType="textUri" android:textColor="#ffffff"/>
             <Button android:id="@+id/save" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Save &amp; restart msnw"/>
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="SSH key for the mosh login (add the public key to ~/.ssh/authorized_keys on the exporter host)" android:textColor="#cccccc"/>
