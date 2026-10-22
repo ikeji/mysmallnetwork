@@ -452,7 +452,11 @@ link key reaches the child process through the environment, not the command
 line. Flags may follow the host (`msnw mosh user@home -v`). While mosh owns
 the terminal, log output is invisible, so use `-log FILE` (or `MSNW_LOG`) to
 append it to a file; both the in-process forwarder and the ssh ProxyCommand
-child log there.
+child log there, each starting with a banner line. The bootstrap ssh is given
+up after `-ssh-timeout` (default 60s, 0 = never): with `ControlMaster auto` in
+`~/.ssh/config`, ssh reuses an existing master connection to the same host
+instead of running the ProxyCommand, and a master whose connection has died
+makes ssh wait forever (`ssh -O exit HOST` clears it).
 
 ## How it works
 

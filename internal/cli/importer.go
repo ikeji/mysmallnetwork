@@ -415,6 +415,7 @@ type nodeFlags struct {
 	port                                 *int
 	verbose                              *bool
 	logFile                              *string
+	logOpen                              bool
 }
 
 func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
@@ -455,16 +456,34 @@ func (nf *nodeFlags) exportEnv() {
 	os.Setenv("MSNW_SERVER_FP", *nf.serverFP)
 }
 
+// openLog redirects the standard logger to -log FILE (if given) and writes
+// a startup banner naming the command, so that the file shows the process
+// started even when it then blocks before producing any other output. It is
+// idempotent, so a command may call it early and newPool again later.
+func (nf *nodeFlags) openLog(command string) error {
+	if nf.logOpen {
+		return nil
+	}
+	if *nf.logFile != "" {
+		f, err := os.OpenFile(*nf.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return err
+		}
+		log.SetOutput(f)
+	}
+	nf.logOpen = true
+	if *nf.logFile != "" || *nf.verbose {
+		log.Printf("%s starting: %s pid %d", command, buildinfo.String(), os.Getpid())
+	}
+	return nil
+}
+
 // newPool binds the shared socket, connects the node and starts the network
 // watcher. The returned stop function releases everything.
 func newPool(nf *nodeFlags) (*pool, func(), error) {
 	quietQUIC()
-	if *nf.logFile != "" {
-		f, err := os.OpenFile(*nf.logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-		if err != nil {
-			return nil, nil, err
-		}
-		log.SetOutput(f)
+	if err := nf.openLog(subcommandName()); err != nil {
+		return nil, nil, err
 	}
 	id, err := ident.New()
 	if err != nil {
@@ -480,6 +499,15 @@ func newPool(nf *nodeFlags) (*pool, func(), error) {
 	go p.watchNetwork(ctx)
 	go p.sweepIdle(ctx)
 	return p, func() { stop(); node.Close() }, nil
+}
+
+// subcommandName is "msnw SUB" from the command line, for the log banner of
+// commands that do not open the log themselves.
+func subcommandName() string {
+	if len(os.Args) > 1 {
+		return "msnw " + os.Args[1]
+	}
+	return "msnw"
 }
 
 // quietQUIC silences quic-go's receive-buffer warning; it is harmless for a
@@ -502,7 +530,6 @@ func startPool(nf *nodeFlags) (*pool, func()) {
 	if *nf.linkKey == "" {
 		usage("a link key is required (-key or $MSNW_KEY)")
 	}
-	log.SetOutput(os.Stderr)
 	p, stop, err := newPool(nf)
 	if err != nil {
 		log.Fatal(err)
@@ -517,6 +544,9 @@ func Connect(args []string) {
 	pos := parseWithTrailingFlags(fs, args)
 	if len(pos) != 1 {
 		usage("usage: msnw connect [-key LINKKEY] NAME[:port|:host:port]")
+	}
+	if err := nf.openLog("msnw connect " + pos[0]); err != nil {
+		log.Fatal(err)
 	}
 	p, stop := startPool(nf)
 	defer stop()

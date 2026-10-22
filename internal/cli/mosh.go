@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Mosh runs mosh to a host published with "msnw export": it starts
@@ -22,10 +24,11 @@ func Mosh(args []string) {
 	fs := flag.NewFlagSet("msnw mosh", flag.ExitOnError)
 	ports := fs.String("p", "60001:60999", "UDP port or range LO:HI for mosh-server (the exporter must allow it with -u)")
 	sshOpts := fs.String("ssh", os.Getenv("MSNW_MOSH_SSH"), "extra options for the bootstrap ssh (or $MSNW_MOSH_SSH)")
+	sshTimeout := fs.Duration("ssh-timeout", 60*time.Second, "give up on the bootstrap ssh after this long (0 = never)")
 	nf := addNodeFlags(fs)
 	pos := parseWithTrailingFlags(fs, args)
 	if len(pos) != 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [-v] [-log FILE] [user@]NAME")
+		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [-ssh OPTS] [-ssh-timeout D] [-v] [-log FILE] [user@]NAME")
 		os.Exit(2)
 	}
 	dest := pos[0]
@@ -40,6 +43,9 @@ func Mosh(args []string) {
 		log.Fatal(err)
 	}
 	nf.exportEnv() // the ProxyCommand child reads the key from the environment
+	if err := nf.openLog("msnw mosh " + name); err != nil {
+		log.Fatal(err)
+	}
 
 	// 1. Start mosh-server through ssh; it listens on loopback only.
 	lang := os.Getenv("LANG")
@@ -57,9 +63,20 @@ func Mosh(args []string) {
 	sshArgs = append(sshArgs, strings.Fields(*sshOpts)...)
 	sshArgs = append(sshArgs, dest, "--", "mosh-server", "new", "-i", "127.0.0.1",
 		"-p", *ports, "-c", "256", "-l", "LANG="+lang)
-	ssh := exec.Command("ssh", sshArgs...)
+	ctx, cancel := context.WithCancel(context.Background())
+	if *sshTimeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, *sshTimeout)
+	}
+	defer cancel()
+	ssh := exec.CommandContext(ctx, "ssh", sshArgs...)
 	ssh.Stderr = os.Stderr
+	ssh.WaitDelay = 2 * time.Second // do not wait on a grandchild that still holds the pipe
 	out, err := ssh.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		// ssh's own ConnectTimeout does not cover a ControlMaster socket
+		// whose master no longer answers, and ssh then waits forever.
+		log.Fatalf("ssh bootstrap timed out after %s (a stale ControlMaster may be in use; try \"ssh -O exit %s\", or -ssh-timeout 0)", *sshTimeout, dest)
+	}
 	if err != nil {
 		log.Fatalf("ssh bootstrap failed: %v", err)
 	}
