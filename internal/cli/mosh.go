@@ -33,16 +33,9 @@ func Mosh(args []string) {
 	}
 	dest := pos[0]
 	name := dest[strings.LastIndex(dest, "@")+1:]
-	for _, c := range []string{"ssh", "mosh-client"} {
-		if _, err := exec.LookPath(c); err != nil {
-			log.Fatalf("%s not found", c)
-		}
+	if _, err := exec.LookPath("mosh-client"); err != nil {
+		log.Fatal("mosh-client not found")
 	}
-	self, err := os.Executable()
-	if err != nil {
-		log.Fatal(err)
-	}
-	nf.exportEnv() // the ProxyCommand child reads the key from the environment
 	if err := nf.openLog("msnw mosh " + name); err != nil {
 		log.Fatal(err)
 	}
@@ -52,14 +45,10 @@ func Mosh(args []string) {
 	if lang == "" {
 		lang = "en_US.UTF-8"
 	}
-	proxy := fmt.Sprintf("ProxyCommand=%s connect %s", shellQuote(self), shellQuote(name))
-	if *nf.verbose {
-		proxy += " -v"
+	sshArgs, err := sshProxyArgs(nf, name)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if *nf.logFile != "" {
-		proxy += " -log " + shellQuote(*nf.logFile)
-	}
-	sshArgs := []string{"-o", proxy}
 	sshArgs = append(sshArgs, strings.Fields(*sshOpts)...)
 	sshArgs = append(sshArgs, dest, "--", "mosh-server", "new", "-i", "127.0.0.1",
 		"-p", *ports, "-c", "256", "-l", "LANG="+lang)
@@ -117,10 +106,4 @@ func Mosh(args []string) {
 		}
 		log.Fatal(err)
 	}
-}
-
-// shellQuote makes s safe inside ssh's ProxyCommand, which the user's shell
-// interprets.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

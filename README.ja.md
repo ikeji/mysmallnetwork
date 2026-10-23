@@ -29,7 +29,7 @@ linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/downlo
 laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # OS / CPU に合わせて選ぶ
 
 linuxbox> ./msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999     # sshd(と mosh 用 UDP)を "linuxbox" の名前で公開。キーも名前も好きに
-laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox   # ssh で入る
+laptop>   ./msnw ssh -key mylonglongsecretkey user@linuxbox                            # ssh で入る
 laptop>   ./msnw mosh -key mylonglongsecretkey user@linuxbox                           # mosh なら
 
 linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # コマンドを実行し、開いたポートを公開
@@ -54,7 +54,7 @@ Android は同じ Releases ページの `msnw-android-arm64.apk` を入れる([a
 ## ビルド
 
 ```
-make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, mosh, gen-key, version サブコマンド)
+make            # CGO_ENABLED=0 の静的バイナリ bin/msnw を生成(server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, ssh, mosh, gen-key, version サブコマンド)
 make test       # ユニットテスト + NAT シミュレーション全組み合わせ(make unit / make natsim で個別に)
 make cross      # linux/darwin/windows/freebsd 向けを bin/<os>-<arch>/ に生成
 ```
@@ -102,11 +102,16 @@ msnw export -n linuxbox -t 22
 laptop:
 
 ```
-ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox
+msnw ssh user@linuxbox
 ```
 
-ホスト名 `linuxbox` は ssh の表示用で、実際の経路は ProxyCommand が作る。`~/.ssh/config` に
-書いておくと `ssh linuxbox` だけで済む(`msnw mosh` もこの設定を使う):
+これは `ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox` を実行する。
+名前の後ろはリモートコマンド(`msnw ssh linuxbox uptime`)。ssh のオプションは
+`-ssh "-A -L 8080:localhost:80"` か `$MSNW_SSH` で渡す。`-v` は msnw と ssh の両方を
+冗長にするので、繋がらない理由を見るにはこれを付ける(ControlPersist が有効だと ssh は
+ProxyCommand のエラーを捨ててしまう)。ホスト名 `linuxbox` は ssh の表示用で、実際の経路は
+ProxyCommand が作る。素の `ssh` や `scp`、`rsync` から使うなら `~/.ssh/config` に
+書いておくと `ssh linuxbox` だけで済む(`msnw ssh` も `msnw mosh` もこの設定を使う):
 
 ```
 Host linuxbox
@@ -433,6 +438,7 @@ msnw mosh user@home                       # -p で mosh のポート範囲を変
 転送してから `mosh-client` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
 `-ssh "..."` か `MSNW_MOSH_SSH` を使う。リンクキーは環境変数で子プロセスに渡すので
 コマンドラインに出ない。フラグはホスト名の後にも書ける(`msnw mosh user@home -v`)。
+`-v` は ssh にも渡る。
 mosh が端末を占有している間はログが見えないので、`-log FILE`(または `MSNW_LOG`)で
 ファイルに追記する。同一プロセスの転送部分も ssh の ProxyCommand で動く子も、そこに書く。
 

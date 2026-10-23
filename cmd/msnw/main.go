@@ -6,6 +6,7 @@
 //	msnw import   -key K -l [addr] NAME[:port]
 //	msnw connect  -key K NAME[:port]
 //	msnw socks5-proxy | http-proxy | proxy
+//	msnw ssh      -key K [-ssh OPTS] [user@]NAME [COMMAND...]
 //	msnw mosh     -key K [-p PORT] [user@]NAME
 //	msnw gen-key
 //	msnw version
@@ -31,6 +32,7 @@ commands:
   socks5-proxy   SOCKS5 proxy on 127.0.0.1:1080 (msnw names via the tunnel)
   http-proxy     HTTP proxy on 127.0.0.1:8080
   proxy          both proxies in one process
+  ssh       run ssh to a published host (msnw as the ProxyCommand)
   mosh      run mosh to a published host (ssh + UDP through the tunnel)
   gen-key   print a fresh random link key
   version   print the version
@@ -61,6 +63,8 @@ func main() {
 		cli.HTTPProxy(args)
 	case "proxy":
 		cli.Proxy(args)
+	case "ssh":
+		cli.SSH(args)
 	case "mosh":
 		cli.Mosh(args)
 	case "gen-key", "genkey":

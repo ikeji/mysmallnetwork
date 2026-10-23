@@ -30,7 +30,7 @@ linuxbox> curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/downlo
 laptop>   curl -L https://github.com/ikeji/mysmallnetwork/releases/latest/download/msnw-linux-amd64.tar.gz | tar xz   # pick your OS / CPU
 
 linuxbox> ./msnw export -key mylonglongsecretkey -n linuxbox -t 22 -u 60001-60999     # publish sshd (+ UDP ports for mosh) under the name "linuxbox"; any key, any name
-laptop>   ssh -o ProxyCommand='./msnw connect -key mylonglongsecretkey linuxbox' user@linuxbox   # ssh in
+laptop>   ./msnw ssh -key mylonglongsecretkey user@linuxbox                            # ssh in
 laptop>   ./msnw mosh -key mylonglongsecretkey user@linuxbox                           # or mosh
 
 linuxbox> ./msnw wrap-export -key mylonglongsecretkey -n files -- python3 -m http.server   # run a command and publish the port it opens
@@ -57,7 +57,7 @@ Android: install `msnw-android-arm64.apk` from the same Releases page (see
 ## Build
 
 ```
-make            # static binary bin/msnw (CGO_ENABLED=0) with the server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, mosh, gen-key, version subcommands
+make            # static binary bin/msnw (CGO_ENABLED=0) with the server, export, wrap-export, import, connect, socks5-proxy, http-proxy, proxy, ssh, mosh, gen-key, version subcommands
 make test       # unit tests + the full NAT simulation matrix (make unit / make natsim / make roam individually)
 make cross      # linux/darwin/windows/freebsd builds into bin/<os>-<arch>/
 ```
@@ -108,12 +108,18 @@ msnw export -n linuxbox -t 22
 laptop:
 
 ```
-ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox
+msnw ssh user@linuxbox
 ```
 
-The host name `linuxbox` is only what ssh displays; the ProxyCommand makes the
-actual path. Put it in `~/.ssh/config` and `ssh linuxbox` is enough (`msnw mosh`
-uses the same entry):
+This runs `ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox`.
+Anything after the name is the remote command (`msnw ssh linuxbox uptime`);
+ssh options go in `-ssh "-A -L 8080:localhost:80"` or `$MSNW_SSH`, and `-v`
+makes both msnw and ssh verbose, which is also the way to see why a
+connection failed (ssh hides the ProxyCommand's errors when ControlPersist is
+on). The host name `linuxbox` is only what ssh displays; the ProxyCommand makes
+the actual path. To use plain `ssh`, `scp` or `rsync`, put the ProxyCommand in
+`~/.ssh/config` and `ssh linuxbox` is enough (`msnw ssh` and `msnw mosh` use
+the same entry):
 
 ```
 Host linuxbox
