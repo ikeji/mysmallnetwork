@@ -12,8 +12,8 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Cross-compile
@@ -33,7 +33,7 @@ jobs:
           (cd dist && sha256sum * > SHA256SUMS)
           ls -l dist
       # ---- Android APK: msnw + mosh-client/dropbear built with the NDK ----
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -55,7 +55,7 @@ jobs:
           (cd android && ./gradlew --no-daemon -q assembleRelease)
           cp android/app/build/outputs/apk/release/app-release.apk dist/msnw-android-arm64.apk
           (cd dist && sha256sum msnw-android-arm64.apk >> SHA256SUMS)
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
