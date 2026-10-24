@@ -3,8 +3,8 @@
 //	msnw server   [-server-key S] [-listen :4433] [-relay :4434] [-identity file]
 //	msnw export   -key K -n NAME -t [host:]port [-t ...] [--all] [-s host:port ...]
 //	msnw wrap-export -key K -n NAME [-p PORT] -- COMMAND [ARGS...]
-//	msnw import   -key K -l [addr] NAME[:port]
-//	msnw connect  -key K NAME[:port]
+//	msnw import   -key K [[[laddr]:]lport=]NAME[:port] ...
+//	msnw connect  -key K NAME[:port|@host:port]
 //	msnw socks5-proxy | http-proxy | proxy
 //	msnw ssh      -key K [-ssh OPTS] [user@]NAME [COMMAND...]
 //	msnw mosh     -key K [-p PORT] [user@]NAME
@@ -27,7 +27,7 @@ commands:
   server    run the rendezvous + relay server
   export    publish local services under a name
   wrap-export  run a command and publish the port it listens on
-  import    bring a published port to a local port (-l [addr] NAME[:port])
+  import    bring published ports to local ports ([[[laddr]:]lport=]NAME[:port] ...)
   connect   pipe stdin/stdout to a published port (nc style; ssh ProxyCommand)
   socks5-proxy   SOCKS5 proxy on 127.0.0.1:1080 (msnw names via the tunnel)
   http-proxy     HTTP proxy on 127.0.0.1:8080

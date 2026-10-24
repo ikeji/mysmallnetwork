@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/ikeji/mysmallnetwork/internal/netutil"
 )
 
 // SSH runs ssh to a host published with "msnw export", with this binary as
-// the ProxyCommand: msnw ssh [user@]NAME[:port] [COMMAND...]. Everything
+// the ProxyCommand: msnw ssh [user@]NAME[:port|@host:port] [COMMAND...]. Everything
 // after the name is the remote command, as with ssh itself; ssh options go
 // in -ssh (or $MSNW_SSH). NAME is also what ssh shows and looks up in
 // ~/.ssh/config; the ProxyCommand makes the actual path.
@@ -20,20 +22,23 @@ func SSH(args []string) {
 	nf := addNodeFlags(fs)
 	fs.Parse(args)
 	if fs.NArg() < 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw ssh -key LINKKEY [-ssh OPTS] [-v] [-log FILE] [user@]NAME[:port|:host:port] [COMMAND...]")
+		fmt.Fprintln(os.Stderr, "usage: msnw ssh -key LINKKEY [-ssh OPTS] [-v] [-log FILE] [user@]NAME[:port] | [user]@NAME@host:port [COMMAND...]")
 		os.Exit(2)
 	}
 	dest, command := fs.Arg(0), fs.Args()[1:]
 	user, spec := "", dest
-	if i := strings.LastIndex(dest, "@"); i >= 0 {
-		user, spec = dest[:i+1], dest[i+1:]
+	// As in ssh, the first @ ends the user. So an exporter's "NAME@host:port"
+	// needs the user in front (user@NAME@host:22), or an empty one
+	// (@NAME@host:22) to take ssh's default.
+	if u, rest, ok := strings.Cut(dest, "@"); ok && !strings.ContainsAny(u, ":[") {
+		spec = rest
+		if u != "" {
+			user = u + "@"
+		}
 	}
-	name := spec
-	if i := strings.Index(spec, ":"); i >= 0 {
-		name = spec[:i]
-	}
-	if name == "" {
-		log.Fatalf("bad destination %q", dest)
+	name, _, err := netutil.ParseRemote(spec)
+	if err != nil {
+		log.Fatalf("bad destination %q: %v", dest, err)
 	}
 	if err := nf.openLog("msnw ssh " + name); err != nil {
 		log.Fatal(err)

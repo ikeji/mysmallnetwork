@@ -8,7 +8,7 @@
 flowchart TB
     srv["msnw server<br/>QUIC 制御 :4433 / UDP relay :4434<br/>紹介、NAT 越えの手伝い、最後の手段の中継"]
     subgraph laptop
-        im["msnw import -l 1234 hogehoge"] --- app["nc localhost 1234"]
+        im["msnw import hogehoge:1234"] --- app["nc localhost 1234"]
     end
     subgraph linuxbox
         ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
@@ -126,7 +126,7 @@ ProxyCommand を使わず、ノート PC のローカルポートを linuxbox �
 ```mermaid
 flowchart LR
     subgraph laptop
-        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 linuxbox"]
+        s["ssh -p 2222 user@localhost"] --> im["msnw import 2222=linuxbox"]
     end
     subgraph linuxbox
         ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
@@ -135,7 +135,7 @@ flowchart LR
 ```
 
 ```
-msnw import -l 2222 linuxbox        # 起動したままにする
+msnw import 2222=linuxbox        # 起動したままにする
 ssh -p 2222 user@localhost
 ```
 
@@ -210,7 +210,7 @@ laptop>   curl -x http://127.0.0.1:8080 http://files/
 ```mermaid
 flowchart LR
     subgraph laptop
-        c["curl http://localhost:8000/"] --> im["msnw import -l 8000 files"]
+        c["curl http://localhost:8000/"] --> im["msnw import files:8000"]
     end
     subgraph linuxbox
         ex["msnw export -n files -t 8000"] -->|TCP| py["python -m http.server :8000"]
@@ -221,7 +221,7 @@ flowchart LR
 ```
 linuxbox> python3 -m http.server                                  # 端末 1
 linuxbox> msnw export -n files -t 8000   # 端末 2
-laptop>   msnw import -l 8000 files
+laptop>   msnw import files:8000
 laptop>   curl http://localhost:8000/
 ```
 
@@ -341,13 +341,22 @@ TCP で待ち受けを始めるのを `/proc` で検出して、見つかった�
 ```
 msnw connect hogehoge                    # stdin/stdout をそのまま繋ぐ(nc / ssh ProxyCommand 用)
 msnw connect hogehoge:8080               # exporter 側の別ポートを指定
-msnw connect exit:example.com:80         # --all な exporter 経由で任意ホストへ
+msnw connect exit@example.com:80         # --all な exporter 経由で任意ホストへ
 
-msnw import -l hogehoge                  # exporter の既定ポートと同じ番号で 127.0.0.1 に listen
-msnw import -l 5000 hogehoge             # 127.0.0.1:5000 → hogehoge の既定ターゲット
-msnw import -l :5000 hogehoge:8080       # 全インターフェイスで listen
-msnw import -l udp:60001 hogehoge:60001  # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw import hogehoge                     # exporter の既定ポートと同じ番号で 127.0.0.1 に listen → そのポートへ
+msnw import hogehoge:8080                # 127.0.0.1:8080 → hogehoge の 8080
+msnw import 5000=hogehoge                # 127.0.0.1:5000 → hogehoge の既定ターゲット
+msnw import :5000=hogehoge:8080          # 全インターフェイス(アドレスを空にする)→ 8080
+msnw import hogehoge:60001/udp           # UDP を転送(送信元アドレスごとに 1 フロー)
+msnw import 10.0.0.1:443=web:443 10.0.0.1:80=web:80   # 1 プロセスで複数転送
+msnw import 8080=exit@example.com:80                  # --all な exporter 経由で任意ホストへ
 ```
+
+転送の書き方は `[[[LADDR]:]LPORT=]NAME[:PORT|@HOST:PORT][/udp]`。`=` の左がローカル側で、
+`port` なら 127.0.0.1、`:port` なら全インターフェイス、`addr:port` ならそのアドレス。
+右がリモート側で `msnw connect` の引数と同じ綴り。
+`=` を省くとローカルはリモートと同じ番号のポート。1024 未満のポートは root か
+`setcap cap_net_bind_service=+ep msnw`(systemd unit なら `AmbientCapabilities=CAP_NET_BIND_SERVICE`)が要る。
 
 ### socks5-proxy, http-proxy, proxy
 
@@ -418,7 +427,7 @@ msnw socks5-proxy            # ブラウザのある PC
   Wi-Fi ネットワークのプロキシ設定をホスト `127.0.0.1`、ポート `8080` にする(設定 →
   Wi-Fi → そのネットワーク → 詳細 → プロキシ: 手動)。これで Chrome から `http://mypc/`
   が開ける。この設定は Wi-Fi ごとで、モバイル回線では効かない。プロキシを使わないなら
-  `msnw import -l 8765 mypc` で `http://localhost:8765/` を開く方法がどのブラウザでも使える。
+  `msnw import mypc:8765` で `http://localhost:8765/` を開く方法がどのブラウザでも使える。
 
 例: ssh
 

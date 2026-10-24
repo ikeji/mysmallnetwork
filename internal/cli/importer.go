@@ -536,7 +536,7 @@ func Connect(args []string) {
 	nf := addNodeFlags(fs)
 	pos := parseWithTrailingFlags(fs, args)
 	if len(pos) != 1 {
-		usage("usage: msnw connect [-key LINKKEY] NAME[:port|:host:port]")
+		usage("usage: msnw connect [-key LINKKEY] NAME[:port|@host:port]")
 	}
 	if err := nf.openLog("msnw connect " + pos[0]); err != nil {
 		log.Fatal(err)
@@ -546,21 +546,41 @@ func Connect(args []string) {
 	runStdio(p.ctx, p, pos[0])
 }
 
-// Import listens locally and forwards to a published service:
-// msnw import -l [addr] NAME[:port]   (addr: port, :port, host:port or udp:port; bare -l = the exporter's port)
+// Import listens locally and forwards to published services:
+//
+//	msnw import [[[LADDR]:]LPORT=]NAME[:PORT|@HOST:PORT][/udp] ...
+//
+// See netutil.ParseForward for the grammar.
 func Import(args []string) {
-	args = netutil.OptionalValueFlag(args, "l", "auto")
 	fs := flag.NewFlagSet("msnw import", flag.ExitOnError)
-	listen := fs.String("l", "", "local address to listen on: port, :port, host:port or udp:port (bare -l uses the exporter's port)")
 	nf := addNodeFlags(fs)
 	pos := parseWithTrailingFlags(fs, args)
-	if len(pos) != 1 || *listen == "" {
-		usage("usage: msnw import [-key LINKKEY] -l [addr] NAME[:port|:host:port]")
+	if len(pos) == 0 {
+		usage(importUsage)
+	}
+	var fwds []netutil.Forward
+	for _, a := range pos {
+		f, err := netutil.ParseForward(a)
+		if err != nil {
+			usage(err.Error() + "\n" + importUsage)
+		}
+		fwds = append(fwds, f)
 	}
 	p, stop := startPool(nf)
 	defer stop()
-	runListen(p.ctx, p, pos[0], *listen)
+	runForwards(p.ctx, p, fwds)
 }
+
+const importUsage = `usage: msnw import [-key LINKKEY] [[[LADDR]:]LPORT=]NAME[:PORT|@HOST:PORT][/udp] ...
+  NAME                    127.0.0.1, the exporter's default port -> that port
+  NAME:443                127.0.0.1:443 -> port 443 on the exporter
+  5000=NAME               127.0.0.1:5000 -> the exporter's default port
+  :443=NAME:8443          every interface, port 443 -> 8443
+  10.0.0.1:443=NAME:8443  one address
+  8080=NAME@host:80       any host, through an --all exporter
+  NAME:60001/udp          UDP instead of TCP
+Left of "=" is the local side (port, :port or addr:port); right of it the remote
+side as "msnw connect" takes it. Several forwards may be given.`
 
 // proxyFlags are shared by the proxy commands.
 func proxyFlags(fs *flag.FlagSet) (nf *nodeFlags, def *string) {
@@ -629,49 +649,79 @@ func runStdio(ctx context.Context, p *pool, spec string) {
 	tunnel.PipeRW(sess, os.Stdin, os.Stdout)
 }
 
-func runListen(ctx context.Context, p *pool, spec, listen string) {
-	name, target := netutil.SplitName(spec)
-	udp := false
-	if strings.HasPrefix(listen, "udp:") {
-		udp = true
-		listen = strings.TrimPrefix(listen, "udp:")
-		if listen == "" {
-			listen = "auto"
+// listener is one bound forward.
+type listener struct {
+	tcp net.Listener
+	udp *net.UDPConn
+	fwd netutil.Forward
+}
+
+// runForwards binds every forward and serves them until ctx ends. Binding
+// happens before serving so that a bad address fails the whole command
+// instead of leaving the others half up.
+func runForwards(ctx context.Context, p *pool, fwds []netutil.Forward) {
+	var ls []listener
+	for _, f := range fwds {
+		// Connect eagerly: it validates the name and tells us the default port.
+		_, defaultPort, err := p.get(ctx, f.Name)
+		if err != nil {
+			log.Fatal(err)
 		}
+		ln, err := bindForward(f, defaultPort)
+		if err != nil {
+			log.Fatal(err)
+		}
+		ls = append(ls, ln)
 	}
-	// Connect eagerly: it validates the name and tells us the default port.
-	_, defaultPort, err := p.get(ctx, name)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if listen == "auto" {
-		port := defaultPort
-		if target != "" {
-			_, ps, err := net.SplitHostPort(target)
-			if err != nil {
-				ps = target
+	var wg sync.WaitGroup
+	for _, ln := range ls {
+		wg.Add(1)
+		go func(ln listener) {
+			defer wg.Done()
+			if ln.udp != nil {
+				serveUDPForward(ctx, p, ln.fwd.Name, ln.fwd.Target, ln.udp)
+			} else {
+				serveTCPForward(ctx, p, ln.fwd.Name, ln.fwd.Target, ln.tcp)
 			}
-			port, _ = strconv.Atoi(ps)
-		}
-		if port == 0 {
-			log.Fatal("-l without a value, but the exporter has no default port; give -l PORT")
-		}
-		listen = strconv.Itoa(port)
+		}(ln)
 	}
-	addr, err := netutil.ParseListen(listen)
-	if err != nil {
-		log.Fatal(err)
+	wg.Wait()
+}
+
+// bindForward binds f's local side. A forward that names no port at all
+// listens on the exporter's default port.
+func bindForward(f netutil.Forward, defaultPort int) (listener, error) {
+	port := f.Port
+	if port == 0 {
+		port = defaultPort
 	}
-	if udp {
-		runListenUDP(ctx, p, name, target, addr)
-		return
+	if port == 0 {
+		return listener{}, fmt.Errorf("%s: the exporter has no default port; give one (%s:PORT)", f.Remote(), f.Name)
+	}
+	addr := f.Listen(port)
+	if f.UDP {
+		uc, err := listenUDP(addr)
+		if err != nil {
+			return listener{}, err
+		}
+		return listener{udp: uc, fwd: f}, nil
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatal(err)
+		return listener{}, err
 	}
+	return listener{tcp: ln, fwd: f}, nil
+}
+
+// serveTCPForward accepts on ln and pipes each connection to target on
+// exporter name until ctx ends.
+func serveTCPForward(ctx context.Context, p *pool, name, target string, ln net.Listener) {
 	go func() { <-ctx.Done(); ln.Close() }()
-	log.Printf("listening on %s -> %s", ln.Addr(), spec)
+	dst := name
+	if target != "" {
+		dst += ":" + target
+	}
+	log.Printf("listening on %s -> %s", ln.Addr(), dst)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -690,16 +740,6 @@ func runListen(ctx context.Context, p *pool, spec, listen string) {
 }
 
 const udpIdle = 10 * time.Minute
-
-// runListenUDP forwards datagrams arriving on addr to target on exporter
-// name, one flow per local source address.
-func runListenUDP(ctx context.Context, p *pool, name, target, addr string) {
-	uc, err := listenUDP(addr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	serveUDPForward(ctx, p, name, target, uc)
-}
 
 func listenUDP(addr string) (*net.UDPConn, error) {
 	ua, err := net.ResolveUDPAddr("udp", addr)

@@ -9,7 +9,7 @@ from behind NAT.
 flowchart TB
     srv["msnw server<br/>QUIC control :4433 / UDP relay :4434<br/>introduction, NAT traversal help, relay of last resort"]
     subgraph laptop
-        im["msnw import -l 1234 hogehoge"] --- app["nc localhost 1234"]
+        im["msnw import hogehoge:1234"] --- app["nc localhost 1234"]
     end
     subgraph linuxbox
         ex["msnw export -n hogehoge -t 1234"] --> svc["nc -l 1234"]
@@ -135,7 +135,7 @@ instead:
 ```mermaid
 flowchart LR
     subgraph laptop
-        s["ssh -p 2222 user@localhost"] --> im["msnw import -l 2222 linuxbox"]
+        s["ssh -p 2222 user@localhost"] --> im["msnw import 2222=linuxbox"]
     end
     subgraph linuxbox
         ex["msnw export -t 22"] -->|TCP| sshd["sshd :22"]
@@ -144,7 +144,7 @@ flowchart LR
 ```
 
 ```
-msnw import -l 2222 linuxbox        # leave it running
+msnw import 2222=linuxbox        # leave it running
 ssh -p 2222 user@localhost
 ```
 
@@ -220,7 +220,7 @@ published, and the laptop keeps a local port connected to it.
 ```mermaid
 flowchart LR
     subgraph laptop
-        c["curl http://localhost:8000/"] --> im["msnw import -l 8000 files"]
+        c["curl http://localhost:8000/"] --> im["msnw import files:8000"]
     end
     subgraph linuxbox
         ex["msnw export -n files -t 8000"] -->|TCP| py["python -m http.server :8000"]
@@ -231,7 +231,7 @@ flowchart LR
 ```
 linuxbox> python3 -m http.server                                  # in one terminal
 linuxbox> msnw export -n files -t 8000   # in another
-laptop>   msnw import -l 8000 files
+laptop>   msnw import files:8000
 laptop>   curl http://localhost:8000/
 ```
 
@@ -361,13 +361,23 @@ command exits, and Ctrl-C stops both.
 ```
 msnw connect hogehoge                    # pipe stdin/stdout (nc style, ssh ProxyCommand)
 msnw connect hogehoge:8080               # another port on the exporter
-msnw connect exit:example.com:80         # any host through an --all exporter
+msnw connect exit@example.com:80         # any host through an --all exporter
 
-msnw import -l hogehoge                  # listen on 127.0.0.1 on the exporter's default port number
-msnw import -l 5000 hogehoge             # 127.0.0.1:5000 -> hogehoge's default target
-msnw import -l :5000 hogehoge:8080       # listen on all interfaces
-msnw import -l udp:60001 hogehoge:60001  # forward UDP (one flow per source address)
+msnw import hogehoge                     # 127.0.0.1, same port number as the exporter's default -> that port
+msnw import hogehoge:8080                # 127.0.0.1:8080 -> hogehoge's port 8080
+msnw import 5000=hogehoge                # 127.0.0.1:5000 -> hogehoge's default target
+msnw import :5000=hogehoge:8080          # every interface (empty address) -> 8080
+msnw import hogehoge:60001/udp           # forward UDP (one flow per source address)
+msnw import 10.0.0.1:443=web:443 10.0.0.1:80=web:80   # several forwards in one process
+msnw import 8080=exit@example.com:80                  # any host, through an --all exporter
 ```
+
+A forward is `[[[LADDR]:]LPORT=]NAME[:PORT|@HOST:PORT][/udp]`: left of `=` the
+local side (`port` is 127.0.0.1, `:port` every interface, `addr:port` one
+address); right of it the remote side exactly as `msnw connect` takes it. Without `=` the local port
+is the remote port number. Ports below 1024 need root or
+`setcap cap_net_bind_service=+ep msnw` (`AmbientCapabilities=CAP_NET_BIND_SERVICE`
+in a systemd unit).
 
 ### socks5-proxy, http-proxy, proxy
 
@@ -445,7 +455,7 @@ reached directly, so the proxy can stay on all the time.
   the Wi-Fi network's proxy to host `127.0.0.1`, port `8080` (Settings →
   Wi-Fi → the network → Advanced → Proxy: Manual). Chrome then opens
   `http://mypc/`. The setting is per Wi-Fi network and does not apply on
-  mobile data. Without a proxy at all, `msnw import -l 8765 mypc` and
+  mobile data. Without a proxy at all, `msnw import mypc:8765` and
   `http://localhost:8765/` work in every browser.
 
 Example: ssh

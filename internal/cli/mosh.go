@@ -32,7 +32,10 @@ func Mosh(args []string) {
 		os.Exit(2)
 	}
 	dest := pos[0]
-	name := dest[strings.LastIndex(dest, "@")+1:]
+	name := dest
+	if _, rest, ok := strings.Cut(dest, "@"); ok {
+		name = rest
+	}
 	if _, err := exec.LookPath("mosh-client"); err != nil {
 		log.Fatal("mosh-client not found")
 	}
