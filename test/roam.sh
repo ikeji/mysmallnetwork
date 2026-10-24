@@ -49,8 +49,8 @@ while True:
     c,_=s.accept(); threading.Thread(target=h,args=(c,),daemon=True).start()
 ' >/dev/null 2>&1 &
 sleep 0.3
-nsbg siteB "$ROOT/bin/msnw" import -v -l udp:31300 sitea >"$L/client.log" 2>&1 &
-nsbg siteB "$ROOT/bin/msnw" import -v -l 31301 sitea:21301 >"$L/client-tcp.log" 2>&1 &
+nsbg siteB "$ROOT/bin/msnw" import -v 31300=sitea/udp >"$L/client.log" 2>&1 &
+nsbg siteB "$ROOT/bin/msnw" import -v 31301=sitea:21301 >"$L/client-tcp.log" 2>&1 &
 sleep 1.5
 
 # TCP: one connection sends numbered lines for the whole test and checks the
