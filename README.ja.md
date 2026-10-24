@@ -356,7 +356,8 @@ msnw import 8080=exit@example.com:80                  # --all な exporter 経�
 `port` なら 127.0.0.1、`:port` なら全インターフェイス、`addr:port` ならそのアドレス。
 右がリモート側で `msnw connect` の引数と同じ綴り。
 `=` を省くとローカルはリモートと同じ番号のポート。1024 未満のポートは root か
-`setcap cap_net_bind_service=+ep msnw`(systemd unit なら `AmbientCapabilities=CAP_NET_BIND_SERVICE`)が要る。
+`setcap cap_net_bind_service=+ep msnw`(systemd unit なら `AmbientCapabilities=CAP_NET_BIND_SERVICE`)が要る。再起動後も転送を維持する systemd ユニットは
+[examples/msnw-import.service](examples/msnw-import.service)。
 
 ### socks5-proxy, http-proxy, proxy
 

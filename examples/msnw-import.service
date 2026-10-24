@@ -1,0 +1,63 @@
+# systemd unit for "msnw import": bring ports published by an exporter to
+# this machine, bound to a fixed address, and keep them across reboots.
+#
+# Equivalent to:
+#     msnw import -key $MSNW_KEY 203.0.113.10:443=web:443 203.0.113.10:80=web:80
+#
+# Install:
+#     sudo install -m 755 msnw /usr/local/bin/msnw
+#     sudo install -d -m 700 /etc/msnw
+#     printf 'MSNW_KEY=%s\n' "<the exporter's key>" | sudo tee /etc/msnw/env
+#     sudo chmod 600 /etc/msnw/env
+#     sudo cp msnw-import.service /etc/systemd/system/
+#     sudo systemctl edit msnw-import      # or edit ExecStart below: your address, ports and exporter name
+#     sudo systemctl daemon-reload
+#     sudo systemctl enable --now msnw-import
+#     journalctl -u msnw-import -f         # wait for: listening on 203.0.113.10:443 -> web:443
+#
+# The link key lives in /etc/msnw/env, not here: unit files are world-readable.
+# The same file may also set MSNW_SERVER (comma-separated host:port list),
+# MSNW_SERVER_KEY and MSNW_SERVER_FP (comma-separated fingerprints).
+#
+# Each argument is one forward, [[[LADDR]:]LPORT=]NAME[:PORT|@HOST:PORT][/udp]
+# (see "msnw import" with no arguments). All of them are bound before any is
+# served, so a port that is taken fails the whole unit and systemd retries.
+# The unit starts after the network is up, but the address must already be
+# configured on an interface when it binds; if it comes up later (a VPN, a
+# floating IP), add net.ipv4.ip_nonlocal_bind=1 to sysctl or an After= on
+# the unit that brings it up.
+
+[Unit]
+Description=msnw importer (published ports on a local address)
+Documentation=https://github.com/ikeji/mysmallnetwork
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/msnw/env
+ExecStart=/usr/local/bin/msnw import 203.0.113.10:443=web:443 203.0.113.10:80=web:80
+Restart=always
+RestartSec=5
+
+# Ports below 1024 need CAP_NET_BIND_SERVICE; drop these two lines (or set
+# them empty) when every local port is 1024 or above.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Apart from that the importer only listens and makes outbound connections
+# (to the server and to peers), so it needs no other privileges or writable
+# paths.
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

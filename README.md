@@ -377,7 +377,8 @@ local side (`port` is 127.0.0.1, `:port` every interface, `addr:port` one
 address); right of it the remote side exactly as `msnw connect` takes it. Without `=` the local port
 is the remote port number. Ports below 1024 need root or
 `setcap cap_net_bind_service=+ep msnw` (`AmbientCapabilities=CAP_NET_BIND_SERVICE`
-in a systemd unit).
+in a systemd unit). [examples/msnw-import.service](examples/msnw-import.service)
+is a unit that keeps such forwards up across reboots.
 
 ### socks5-proxy, http-proxy, proxy
 
