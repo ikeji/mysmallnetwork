@@ -48,7 +48,9 @@ load_rc_config $name
 # user can write (created in prestart, which still runs as root).
 piddir=/var/run/msnw
 pidfile=${piddir}/server.pid
-procname=/usr/local/bin/msnw
+# The pidfile holds daemon(8)'s own pid (-P below), so rc.subr must look
+# for "daemon", not msnw: leave procname at its default (= command).
+msnw=/usr/local/bin/msnw
 command=/usr/sbin/daemon
 # daemon(8) supervises msnw: -r restarts it when it exits, -S sends its log
 # lines to syslog (daemon.notice, i.e. /var/log/messages), -P keeps the
@@ -56,7 +58,7 @@ command=/usr/sbin/daemon
 # ${msnw_server_flags} right after the command, i.e. into daemon's options,
 # which is why the server's own flags live in msnw_server_args instead.)
 command_args="-r -R 5 -S -P ${pidfile} \
-	${procname} server -identity ${msnw_server_identity} ${msnw_server_args}"
+	${msnw} server -identity ${msnw_server_identity} ${msnw_server_args}"
 
 start_precmd=msnw_server_prestart
 

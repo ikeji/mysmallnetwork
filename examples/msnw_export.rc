@@ -47,14 +47,16 @@ load_rc_config $name
 # write (created in prestart, which still runs as root).
 piddir=/var/run/msnw
 pidfile=${piddir}/export.pid
-procname=/usr/local/bin/msnw
+# The pidfile holds daemon(8)'s own pid (-P below), so rc.subr must look
+# for "daemon", not msnw: leave procname at its default (= command).
+msnw=/usr/local/bin/msnw
 command=/usr/sbin/daemon
 # daemon(8) supervises msnw: -r restarts it when it exits, -S sends its log
 # lines to syslog, -P keeps the supervisor's pid so "service msnw_export
 # stop" ends both. (rc.subr puts ${msnw_export_flags} into daemon's options,
 # which is why the exporter's own flags live in msnw_export_args instead.)
 command_args="-r -R 5 -S -P ${pidfile} \
-	${procname} export -n ${msnw_export_name} ${msnw_export_args}"
+	${msnw} export -n ${msnw_export_name} ${msnw_export_args}"
 
 start_precmd=msnw_export_prestart
 

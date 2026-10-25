@@ -37,10 +37,12 @@ load_rc_config $name
 
 piddir=/var/run/msnw
 pidfile=${piddir}/${name}.pid
-procname=/usr/local/bin/msnw
+# The pidfile holds daemon(8)'s own pid (-P below), so rc.subr must look
+# for "daemon", not msnw: leave procname at its default (= command).
+msnw=/usr/local/bin/msnw
 command=/usr/sbin/daemon
 command_args="-r -R 5 -S -P ${pidfile} \
-	${procname} import ${msnw_import_args}"
+	${msnw} import ${msnw_import_args}"
 
 start_precmd=msnw_import_prestart
 
