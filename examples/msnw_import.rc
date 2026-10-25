@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# FreeBSD rc.d script for "msnw import": keep a published port available on
+# a local port, e.g. another machine's sshd on 127.0.0.1:2222.
+#
+# Install (same user, binary and env file as msnw_export.rc):
+#     install -m 555 msnw_import.rc /usr/local/etc/rc.d/msnw_import
+#     sysrc msnw_import_enable=YES msnw_import_args="2222=linuxbox"
+#     service msnw_import start
+#     ssh -p 2222 user@127.0.0.1
+#
+# rc.conf variables (sysrc):
+#     msnw_import_enable    YES to start at boot
+#     msnw_import_user      user to run as (default: msnw)
+#     msnw_import_args      forwards for "msnw import", e.g. "2222=linuxbox :443=web:8443"
+#                           ([[LADDR]:]LPORT=NAME[:PORT], several allowed; required)
+#     msnw_import_env_file  environment file with MSNW_KEY (default: /usr/local/etc/msnw/env)
+#
+# One process serves any number of forwards; list them all in
+# msnw_import_args. See "msnw import -h" for the full syntax.
+
+# PROVIDE: msnw_import
+# REQUIRE: NETWORKING syslogd
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=msnw_import
+rcvar=msnw_import_enable
+
+load_rc_config $name
+
+: ${msnw_import_enable:=NO}
+: ${msnw_import_user:=msnw}
+: ${msnw_import_args:=}
+: ${msnw_import_env_file:=/usr/local/etc/msnw/env}
+
+piddir=/var/run/msnw
+pidfile=${piddir}/${name}.pid
+procname=/usr/local/bin/msnw
+command=/usr/sbin/daemon
+command_args="-r -R 5 -S -P ${pidfile} \
+	${procname} import ${msnw_import_args}"
+
+start_precmd=msnw_import_prestart
+
+msnw_import_prestart()
+{
+	if [ -z "${msnw_import_args}" ]; then
+		err 1 "set msnw_import_args, e.g. sysrc msnw_import_args=\"2222=linuxbox\""
+	fi
+	install -d -o "${msnw_import_user}" -g "${msnw_import_user}" -m 755 "${piddir}"
+	if [ ! -r "${msnw_import_env_file}" ]; then
+		err 1 "${msnw_import_env_file} with MSNW_KEY=... is required"
+	fi
+	set -a
+	. "${msnw_import_env_file}"
+	set +a
+	if [ -z "${MSNW_KEY}" ]; then
+		err 1 "MSNW_KEY is not set in ${msnw_import_env_file}"
+	fi
+}
+
+run_rc_command "$1"

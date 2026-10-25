@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# FreeBSD rc.d script for "msnw export": publish this machine's sshd (and
+# the UDP ports mosh-server uses) under the host name, the counterpart of
+# msnw-export.service.
+#
+# Install:
+#     install -m 755 msnw /usr/local/bin/msnw
+#     install -m 555 msnw_export.rc /usr/local/etc/rc.d/msnw_export
+#     pw useradd msnw -d /nonexistent -s /usr/sbin/nologin -c "msnw"   # if not there yet
+#     install -d -m 700 /usr/local/etc/msnw
+#     printf 'MSNW_KEY=%s\n' "$(msnw gen-key)" > /usr/local/etc/msnw/env   # or paste your key
+#     chmod 600 /usr/local/etc/msnw/env
+#     sysrc msnw_export_enable=YES
+#     service msnw_export start
+#     grep registered /var/log/messages          # once per server
+#
+# The env file may also set MSNW_SERVER, MSNW_SERVER_KEY and MSNW_SERVER_FP
+# (comma-separated lists). The exporter only makes outbound connections.
+#
+# rc.conf variables (sysrc):
+#     msnw_export_enable    YES to start at boot
+#     msnw_export_user      user to run as (default: msnw)
+#     msnw_export_name      name to publish under (default: the short host name)
+#     msnw_export_args      what to export (default: -t 22 -u 60001-60999)
+#     msnw_export_env_file  environment file with MSNW_KEY (default: /usr/local/etc/msnw/env)
+
+# PROVIDE: msnw_export
+# REQUIRE: NETWORKING syslogd sshd
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=msnw_export
+rcvar=msnw_export_enable
+
+load_rc_config $name
+
+: ${msnw_export_enable:=NO}
+: ${msnw_export_user:=msnw}
+: ${msnw_export_name:=$(hostname -s)}
+: ${msnw_export_args:=-t 22 -u 60001-60999}
+: ${msnw_export_env_file:=/usr/local/etc/msnw/env}
+
+# rc.subr runs the command as ${msnw_export_user} (su), so daemon(8) itself
+# runs unprivileged and the pidfile must live in a directory that user can
+# write (created in prestart, which still runs as root).
+piddir=/var/run/msnw
+pidfile=${piddir}/export.pid
+procname=/usr/local/bin/msnw
+command=/usr/sbin/daemon
+# daemon(8) supervises msnw: -r restarts it when it exits, -S sends its log
+# lines to syslog, -P keeps the supervisor's pid so "service msnw_export
+# stop" ends both. (rc.subr puts ${msnw_export_flags} into daemon's options,
+# which is why the exporter's own flags live in msnw_export_args instead.)
+command_args="-r -R 5 -S -P ${pidfile} \
+	${procname} export -n ${msnw_export_name} ${msnw_export_args}"
+
+start_precmd=msnw_export_prestart
+
+msnw_export_prestart()
+{
+	install -d -o "${msnw_export_user}" -g "${msnw_export_user}" -m 755 "${piddir}"
+	if [ ! -r "${msnw_export_env_file}" ]; then
+		err 1 "${msnw_export_env_file} with MSNW_KEY=... is required"
+	fi
+	set -a
+	. "${msnw_export_env_file}"
+	set +a
+	if [ -z "${MSNW_KEY}" ]; then
+		err 1 "MSNW_KEY is not set in ${msnw_export_env_file}"
+	fi
+}
+
+run_rc_command "$1"

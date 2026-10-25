@@ -336,6 +336,7 @@ To keep an exporter running across reboots, see
 [examples/msnw-export.service](examples/msnw-export.service): a systemd unit
 that publishes sshd and the mosh UDP ports under the host name, with the link
 key read from `/etc/msnw/env`. The install steps are in its comments.
+[examples/msnw_export.rc](examples/msnw_export.rc) is the FreeBSD rc.d script.
 
 ### wrap-export
 
@@ -378,7 +379,8 @@ address); right of it the remote side exactly as `msnw connect` takes it. Withou
 is the remote port number. Ports below 1024 need root or
 `setcap cap_net_bind_service=+ep msnw` (`AmbientCapabilities=CAP_NET_BIND_SERVICE`
 in a systemd unit). [examples/msnw-import.service](examples/msnw-import.service)
-is a unit that keeps such forwards up across reboots.
+is a unit that keeps such forwards up across reboots;
+[examples/msnw_import.rc](examples/msnw_import.rc) is the FreeBSD rc.d script.
 
 ### socks5-proxy, http-proxy, proxy
 
