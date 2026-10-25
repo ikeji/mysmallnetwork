@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/qlog"
 
 	"github.com/ikeji/mysmallnetwork/internal/buildinfo"
 	"github.com/ikeji/mysmallnetwork/internal/ident"
@@ -204,6 +205,9 @@ func peerConfig() *quic.Config {
 		MaxIncomingStreams:   4096,
 		EnableDatagrams:      true,
 		InitialPacketSize:    proto.InitialPacketSize,
+		// Debugging aid: with QLOGDIR set, every peer connection writes a
+		// qlog trace (congestion window, losses, RTT) there. Off otherwise.
+		Tracer: qlog.DefaultConnectionTracer,
 	}
 }
 

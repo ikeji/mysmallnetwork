@@ -13,7 +13,12 @@
 #     sudo systemctl enable --now msnw-server
 #     journalctl -u msnw-server | grep fingerprint     # sha256:... to pin
 #
-# Open UDP 4433 and 4434 in the firewall. The key is created on the first
+# Open UDP 4433 and 4434 in the firewall. For relay throughput let the relay
+# have big socket buffers (it asks for 8 MB and logs what it got):
+#     echo 'net.core.rmem_max=8388608
+#     net.core.wmem_max=8388608' | sudo tee /etc/sysctl.d/90-msnw.conf
+#     sudo sysctl --system
+# The key is created on the first
 # start in /var/lib/msnw (StateDirectory, the only writable path); back it
 # up, because a new key means a new fingerprint. To require a server key
 # from nodes, put MSNW_SERVER_KEY=... in /etc/msnw/env (mode 600) and

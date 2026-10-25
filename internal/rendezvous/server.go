@@ -13,7 +13,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"runtime"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -53,6 +56,18 @@ func (ex *exporter) currentCandidates() []string {
 	return netutil.Dedup(out)
 }
 
+// udpNetwork picks "udp4" for an IPv4 listen address, 0.0.0.0 included. Go
+// would otherwise open a dual-stack IPv6 socket for 0.0.0.0, on which FreeBSD
+// and macOS apply the don't-fragment option to IPv6 only (see df_bsd.go), so
+// "-relay 0.0.0.0:4434" is the way to get DF on IPv4 there. ":4434" stays
+// dual-stack.
+func udpNetwork(a *net.UDPAddr) string {
+	if a.IP != nil && a.IP.To4() != nil {
+		return "udp4"
+	}
+	return "udp"
+}
+
 // Run serves the control listener and the relay socket until ctx ends.
 func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	s.exporters = map[string]*exporter{}
@@ -61,7 +76,7 @@ func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	if err != nil {
 		return err
 	}
-	rc, err := net.ListenUDP("udp", ru)
+	rc, err := net.ListenUDP(udpNetwork(ru), ru)
 	if err != nil {
 		return fmt.Errorf("relay listen: %w", err)
 	}
@@ -74,7 +89,7 @@ func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	if err != nil {
 		return err
 	}
-	cc, err := net.ListenUDP("udp", cu)
+	cc, err := net.ListenUDP(udpNetwork(cu), cu)
 	if err != nil {
 		return fmt.Errorf("control listen: %w", err)
 	}
@@ -107,6 +122,7 @@ func (s *Server) Run(ctx context.Context, ctrlAddr, relayAddr string) error {
 	}()
 	log.Printf("control: listening on %s (udp)", cc.LocalAddr())
 	log.Printf("relay:   listening on %s (udp)", rc.LocalAddr())
+	s.relay.logBuffers()
 	log.Printf("fingerprint: sha256:%s", s.Ident.Fingerprint)
 
 	for {
@@ -292,6 +308,55 @@ type relay struct {
 	mu   sync.Mutex
 	sess map[string]*relaySession
 	addr map[string]*relaySession // "ip:port" -> session
+
+	// Forwarding is split in two: run reads the socket and only decides where
+	// a packet goes, writer does the sends. A send toward a slow uplink can
+	// block, and with a single loop the kernel receive queue (often just
+	// 208 KB, net.core.rmem_max) overflowed and dropped packets whenever a
+	// peer on a fast first hop (same host, same data centre) burst into it.
+	// QUIC then saw loss and collapsed to a few percent of the link.
+	out   chan relayPacket
+	pool  sync.Pool
+	drops atomic.Uint64 // packets dropped because out was full
+	// oversize counts packets the kernel refused to send with DF set: they
+	// exceed the path MTU and the endpoints' own probing must settle lower.
+	oversize atomic.Uint64
+	dfErr    error // setDontFragment failure, logged at startup
+}
+
+type relayPacket struct {
+	b        []byte
+	n        int
+	from, to *net.UDPAddr
+}
+
+// relayQueue is how many packets may wait for the writer: about 5 MB of
+// 1200-byte QUIC packets, or 40 ms at 1 Gbit/s.
+const relayQueue = 4096
+
+// relaySocketBuffer is what the relay asks the kernel for on its socket. Linux
+// silently clamps it to net.core.rmem_max / wmem_max; FreeBSD and macOS refuse
+// anything above kern.ipc.maxsockbuf instead, which would leave the tiny
+// default (42 KB on FreeBSD, under 30 packets), so setSocketBuffers halves the
+// request until one is accepted. The achieved size is logged at startup so a
+// too-small limit is visible.
+const relaySocketBuffer = 8 << 20
+
+func setSocketBuffers(c *net.UDPConn, size int) {
+	for s := size; s >= 64<<10 && c.SetReadBuffer(s) != nil; s /= 2 {
+	}
+	for s := size; s >= 64<<10 && c.SetWriteBuffer(s) != nil; s /= 2 {
+	}
+}
+
+// bufferHint is the sysctl that lifts the socket buffer limit on this OS.
+func bufferHint() string {
+	switch runtime.GOOS {
+	case "freebsd", "darwin", "openbsd", "netbsd":
+		return fmt.Sprintf("sysctl kern.ipc.maxsockbuf=%d", 2*relaySocketBuffer)
+	default:
+		return fmt.Sprintf("sysctl -w net.core.rmem_max=%d net.core.wmem_max=%d", relaySocketBuffer, relaySocketBuffer)
+	}
 }
 
 type relaySession struct {
@@ -307,7 +372,28 @@ type relaySession struct {
 }
 
 func newRelay(c *net.UDPConn) *relay {
-	return &relay{conn: c, sess: map[string]*relaySession{}, addr: map[string]*relaySession{}}
+	setSocketBuffers(c, relaySocketBuffer)
+	dfErr := setDontFragment(c)
+	r := &relay{conn: c, sess: map[string]*relaySession{}, addr: map[string]*relaySession{}, out: make(chan relayPacket, relayQueue)}
+	r.pool.New = func() any { return make([]byte, 65535) }
+	r.dfErr = dfErr
+	return r
+}
+
+// logBuffers reports the socket buffer sizes the kernel actually granted.
+func (r *relay) logBuffers() {
+	rcv, snd, ok := socketBuffers(r.conn)
+	if !ok {
+		return
+	}
+	hint := ""
+	if rcv < relaySocketBuffer/2 || snd < relaySocketBuffer/2 {
+		hint = " (small; for throughput: " + bufferHint() + ")"
+	}
+	log.Printf("relay:   socket buffers rcv %d snd %d%s", rcv, snd, hint)
+	if r.dfErr != nil {
+		log.Printf("relay:   cannot set don't-fragment (%v); oversize packets will be fragmented, which some NATs reorder", r.dfErr)
+	}
 }
 
 func (r *relay) allow(session string, clientIP, exporterIP net.IP) {
@@ -318,33 +404,83 @@ func (r *relay) allow(session string, clientIP, exporterIP net.IP) {
 
 func (r *relay) run(ctx context.Context) {
 	go r.reap(ctx)
-	buf := make([]byte, 65535)
+	go r.writer(ctx)
+	// recvmmsg where the platform has it: one syscall drains a whole burst,
+	// which is what keeps the kernel queue from overflowing when a peer on a
+	// fast link sends a GSO batch.
+	batch := newBatchReader(r.conn)
 	for {
-		n, from, err := r.conn.ReadFromUDP(buf)
+		var pkts []relayPacket
+		var err error
+		if batch != nil {
+			pkts, err = batch.read(&r.pool)
+		} else {
+			buf := r.pool.Get().([]byte)
+			var n int
+			var from *net.UDPAddr
+			n, from, err = r.conn.ReadFromUDP(buf)
+			if err != nil {
+				r.pool.Put(buf)
+			} else {
+				pkts = []relayPacket{{b: buf, n: n, from: from}}
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			continue
 		}
-		r.handle(buf[:n], from)
+		for _, p := range pkts {
+			p.to = r.handle(p.b[:p.n], p.from)
+			if p.to == nil {
+				r.pool.Put(p.b)
+				continue
+			}
+			select {
+			case r.out <- p:
+			default:
+				// The writer is behind (slow uplink). Dropping here is what
+				// the kernel would otherwise do, but after a much bigger queue.
+				r.drops.Add(1)
+				r.pool.Put(p.b)
+			}
+		}
 	}
 }
 
-func (r *relay) handle(b []byte, from *net.UDPAddr) {
+// writer sends queued packets in order; one goroutine so a session's
+// packets are never reordered by the relay itself.
+func (r *relay) writer(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case p := <-r.out:
+			if _, err := r.conn.WriteToUDP(p.b[:p.n], p.to); err != nil && errors.Is(err, syscall.EMSGSIZE) {
+				r.oversize.Add(1)
+			}
+			r.pool.Put(p.b)
+		}
+	}
+}
+
+// handle binds hello packets and returns where a data packet goes (nil when
+// it is a hello, or from an address that belongs to no session).
+func (r *relay) handle(b []byte, from *net.UDPAddr) *net.UDPAddr {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if session, role, ok := proto.ParseRelayHello(b); ok {
 		rs := r.sess[session]
 		if rs == nil {
-			return
+			return nil
 		}
 		want := rs.exporterIP
 		if role == proto.RoleClient {
 			want = rs.clientIP
 		}
 		if want == nil || !want.Equal(from.IP) {
-			return
+			return nil
 		}
 		key := from.String()
 		if role == proto.RoleClient {
@@ -360,11 +496,11 @@ func (r *relay) handle(b []byte, from *net.UDPAddr) {
 		}
 		r.addr[key] = rs
 		rs.lastSeen = time.Now()
-		return
+		return nil
 	}
 	rs := r.addr[from.String()]
 	if rs == nil {
-		return
+		return nil
 	}
 	var to *net.UDPAddr
 	if rs.client != nil && rs.client.String() == from.String() {
@@ -373,10 +509,10 @@ func (r *relay) handle(b []byte, from *net.UDPAddr) {
 		to = rs.client
 	}
 	if to == nil {
-		return
+		return nil
 	}
 	rs.lastSeen = time.Now()
-	r.conn.WriteToUDP(b, to)
+	return to
 }
 
 func (r *relay) reap(ctx context.Context) {
@@ -387,6 +523,12 @@ func (r *relay) reap(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+		}
+		if d := r.oversize.Swap(0); d > 0 {
+			log.Printf("relay:   refused %d packets larger than the path MTU (the peers will probe lower)", d)
+		}
+		if d := r.drops.Swap(0); d > 0 {
+			log.Printf("relay:   dropped %d packets (uplink slower than peers)", d)
 		}
 		r.mu.Lock()
 		now := time.Now()

@@ -661,8 +661,31 @@ together with `mosh-client` and dropbear built with the NDK. See
   leaks nothing (the peers just fail to connect), but to rule out disruption,
   pin the server with `-identity` on the server side and `-server-fp` on the nodes
   (the default servers are pinned by the binary).
+- The relay forwards with the don't-fragment bit set, like the QUIC endpoints
+  themselves (Linux `IP_PMTUDISC_PROBE`, `IP_DONTFRAG` on macOS/FreeBSD,
+  `IP_DONTFRAGMENT` on Windows). A plain socket would let the kernel split a
+  1460-byte QUIC packet in two whenever an ICMP had taught it a smaller MTU
+  towards a peer (tunnelled IPv4 access lines report 1460), and the peer's NAT
+  then reassembles the fragments, often out of order; QUIC takes the
+  reordering for loss and the relayed download crawls at a tenth of the
+  direct speed. With DF the relay refuses the oversize packet instead (logged
+  as `refused N packets larger than the path MTU`) and the endpoints' own
+  probing settles below the limit. On FreeBSD and macOS the option only
+  works on an IPv4 socket, so a server there should listen on
+  `-listen 0.0.0.0:4433 -relay 0.0.0.0:4434` (an IPv4 address makes the
+  socket IPv4-only; `:4434` is dual-stack and logs `cannot set
+  don't-fragment`). quic-go has the same gap on FreeBSD, so an exporter there
+  is also better off relayed. The measurements behind this are in
+  [docs/speedtest-2026-10.md](docs/speedtest-2026-10.md) (Japanese).
 - On Linux, quic-go warns when the UDP receive buffer is small. For high
   throughput: `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`.
+  The same applies to the server: the relay asks for 8 MB socket buffers and
+  logs what it got at startup (`relay: socket buffers rcv ... snd ...`, with
+  the sysctl to run when the kernel clamped them; on FreeBSD that is
+  `sysctl kern.ipc.maxsockbuf=16777216`, since its default 2 MB cap rejects the
+  request and the UDP default there is only 42 KB). A relay with the default
+  208 KB drops packets whenever a peer on a fast first hop (same host, same
+  data centre) bursts into it, and the QUIC connection through it crawls.
 - For debugging, `MSNW_FORCE_RELAY=1` makes the importer skip direct paths and
   use only the relay; `-v` shows why each dial failed.
 - `msnw version` prints the build version. Peers and the server exchange their

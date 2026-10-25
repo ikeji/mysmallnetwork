@@ -600,8 +600,25 @@ dropbear を同梱している。[android/README.md](android/README.md) を参�
 - 既定では server 証明書を検証しない。偽 server に繋がれても peer 間は繋がらないだけで
   漏れるものは無いが、妨害を避けたいなら server を `-identity` で鍵固定し `-server-fp` でピン留めする
   (既定サーバーはバイナリがピン留めしている)。
+- リレーは QUIC の両端と同じく DF(don't-fragment)付きで転送する(Linux は
+  `IP_PMTUDISC_PROBE`、macOS/FreeBSD は `IP_DONTFRAG`、Windows は `IP_DONTFRAGMENT`)。
+  素のソケットだと、相手宛てに ICMP で小さい MTU(トンネル型の IPv4 回線は 1460 を返す)を
+  学習した途端にカーネルが 1460 バイトの QUIC パケットを 2 つに割り、相手側の NAT が
+  再構成するときに順序が崩れて、QUIC がそれをロスと誤認し、リレー経由の下りが直結の
+  1/10 まで落ちる。DF ならリレーが大きすぎるパケットを拒む(`refused N packets larger
+  than the path MTU` と記録)だけで、両端の探索が上限の下に落ち着く。FreeBSD と macOS では
+  このオプションが IPv4 ソケットにしか効かないので、そこで server を動かすなら
+  `-listen 0.0.0.0:4433 -relay 0.0.0.0:4434` と IPv4 アドレスで指定する(`:4434` だと
+  dual-stack になり `cannot set don't-fragment` と記録される)。測定の記録は
+  [docs/speedtest-2026-10.md](docs/speedtest-2026-10.md)。
 - Linux で UDP 受信バッファが小さいと quic-go が警告する。高スループットが要るなら
   `sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`。
+  server も同じで、リレーはソケットバッファを 8 MB 要求し、起動時に実際に得た大きさを
+  `relay: socket buffers rcv ... snd ...` と記録する(切り詰められていれば実行すべき sysctl も添える。
+  FreeBSD は上限 2 MB を超える要求を拒否し UDP の既定は 42 KB しかないので
+  `sysctl kern.ipc.maxsockbuf=16777216`)。
+  既定の 208 KB のままだと、同じホストや同じデータセンターなど速い経路から peer がまとめて
+  送ってきたときにリレーが取りこぼし、そこを通る QUIC 接続は極端に遅くなる。
 - デバッグ用に `MSNW_FORCE_RELAY=1` で importer を直結せずリレーのみにできる。
   `-v` で dial の失敗理由を表示。
 - `msnw version` でビルドのバージョンを表示する。peer 同士と server はバージョンを交換し、
