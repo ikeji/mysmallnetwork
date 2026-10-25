@@ -21,7 +21,9 @@
 #     msnw_server_enable    YES to start at boot
 #     msnw_server_user      user to run as (default: msnw)
 #     msnw_server_identity  key file (default: /var/db/msnw/server.key)
-#     msnw_server_args      server flags (default: -listen :4433 -relay :4434)
+#     msnw_server_args      server flags (default: -listen 0.0.0.0:4433 -relay 0.0.0.0:4434;
+#                           the IPv4 address matters: a dual-stack socket cannot set
+#                           don't-fragment on FreeBSD, see the README notes)
 #     msnw_server_env_file  environment file, if present (default: /usr/local/etc/msnw/env)
 
 # PROVIDE: msnw_server
@@ -38,7 +40,7 @@ load_rc_config $name
 : ${msnw_server_enable:=NO}
 : ${msnw_server_user:=msnw}
 : ${msnw_server_identity:=/var/db/msnw/server.key}
-: ${msnw_server_args:=-listen :4433 -relay :4434}
+: ${msnw_server_args:=-listen 0.0.0.0:4433 -relay 0.0.0.0:4434}
 : ${msnw_server_env_file:=/usr/local/etc/msnw/env}
 
 # rc.subr runs the command as ${msnw_server_user} (su), so daemon(8) itself
