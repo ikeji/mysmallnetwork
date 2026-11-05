@@ -145,10 +145,8 @@ class MainActivity : AppCompatActivity() {
         val openUrl = {
             val u = urlEdit.text.toString().trim()
             if (u.isNotEmpty()) {
-                val full = if (u.contains("://")) u else "http://$u"
-                Env.addHistory(this, URL_HISTORY, full) // typed here: remember it
                 urlEdit.setText("")
-                select(newBrowserTab(full))
+                select(newBrowserTab(if (u.contains("://")) u else "http://$u"))
             }
         }
         findViewById<Button>(R.id.openUrlBtn).setOnClickListener { openUrl() }
@@ -312,22 +310,22 @@ class MainActivity : AppCompatActivity() {
                 if (!title.isNullOrBlank()) button.text = title.take(12)
             }
         }
-        val navigate = { remember: Boolean ->
+        val navigate = {
             var u = url.text.toString().trim()
             if (u.isNotEmpty()) {
                 if (!u.contains("://")) u = "http://$u"
-                if (remember) Env.addHistory(this, URL_HISTORY, u)
+                Env.addHistory(this, URL_HISTORY, u)
                 web.loadUrl(u)
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
             }
         }
-        go.setOnClickListener { navigate(true) }
+        go.setOnClickListener { navigate() }
         star.setOnClickListener {
             val u = web.url ?: ""
             if (u.isNotBlank() && u != "about:blank") { Env.addHistory(this, URL_HISTORY, u); toast("bookmarked") }
         }
-        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(true); true } else false }
-        if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate(false) } // from the list: already there
+        url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(); true } else false }
+        if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate() }
         return tab
     }
 
@@ -557,6 +555,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun restartSession(tab: Tab.Term) {
+        Env.addHistory(this, TARGET_HISTORY, tab.entry.target)
         withService { s ->
             Thread {
                 val env = Env.envArray(this)
