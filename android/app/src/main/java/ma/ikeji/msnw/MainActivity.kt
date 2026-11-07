@@ -254,11 +254,15 @@ class MainActivity : AppCompatActivity() {
     // ---- browser tabs -------------------------------------------------------
 
     private fun setupProxy() {
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE_REVERSE_BYPASS)) {
+            // Route only msnw names (bare hostnames and *.msnw) through the proxy;
+            // everything else goes directly so normal web URLs use Android's DNS.
             val config = ProxyConfig.Builder()
                 .addProxyRule("http://127.0.0.1:${MsnwService.PROXY_PORT}")
-                .addBypassRule("127.0.0.1")
-                .addBypassRule("localhost")
+                .bypassSimpleHostnames()
+                .addBypassRule("*.msnw")
+                .setReverseBypassEnabled(true)
                 .build()
             ProxyController.getInstance().setProxyOverride(config, Executors.newSingleThreadExecutor()) {
                 Log.i(MsnwService.TAG, "webview proxy set")
