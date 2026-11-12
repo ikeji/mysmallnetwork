@@ -287,9 +287,11 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE); setHintTextColor(Color.GRAY)
         }
         val go = Button(this).apply { text = "Go" }
+        val reload = Button(this).apply { text = "↻" }
         val star = Button(this).apply { text = "☆" } // bookmark: add the current page to the list
         bar.addView(url, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(go)
+        bar.addView(reload)
         bar.addView(star)
         val web = WebView(this)
         web.settings.javaScriptEnabled = true
@@ -324,6 +326,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         go.setOnClickListener { navigate() }
+        reload.setOnClickListener { web.reload() }
         star.setOnClickListener {
             val u = web.url ?: ""
             if (u.isNotBlank() && u != "about:blank") { Env.addHistory(this, URL_HISTORY, u); toast("bookmarked") }
