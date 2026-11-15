@@ -153,7 +153,13 @@ func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 }
 
 func (s *Server) handleStream(ctx context.Context, conn *quic.Conn, st *quic.Stream) {
-	defer st.Close()
+	// Close only closes the send half; CancelRead releases the receive half too
+	// (proto.Read stops after one frame without reading EOF), so quic-go marks
+	// the stream completed and sends MAX_STREAMS.
+	defer func() {
+		st.CancelRead(0)
+		st.Close()
+	}()
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {

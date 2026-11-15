@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -246,11 +247,12 @@ func (n *Node) control(ctx context.Context, s *server) (*quic.Conn, error) {
 	return conn, nil
 }
 
-// dropControl forgets s's control connection so the next call redials.
-func (n *Node) dropControl(s *server) {
+// dropControl forgets s's control connection (if it is still stale, or
+// unconditionally when stale is nil) so the next call redials.
+func (n *Node) dropControl(s *server, stale *quic.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.ctrl != nil {
+	if s.ctrl != nil && (stale == nil || s.ctrl == stale) {
 		s.ctrl.CloseWithError(0, "reconnect")
 		s.ctrl = nil
 	}
@@ -259,7 +261,7 @@ func (n *Node) dropControl(s *server) {
 // DropControl forgets every control connection so the next calls redial.
 func (n *Node) DropControl() {
 	for _, s := range n.servers {
-		n.dropControl(s)
+		n.dropControl(s, nil)
 	}
 }
 
@@ -339,7 +341,8 @@ func relayHello(ctx context.Context, tr *quic.Transport, relay *net.UDPAddr, ses
 // only adds to the error when none of them knows the name. The servers only
 // see HashName(linkKey, name).
 func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, error) {
-	ctx, cancel := context.WithCancel(ctx)
+	var won atomic.Bool
+	lctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {
 		info *PeerInfo
@@ -348,7 +351,7 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	ch := make(chan result, len(n.servers))
 	for _, s := range n.servers {
 		go func(s *server) {
-			info, err := n.lookupAt(ctx, s, linkKey, name)
+			info, err := n.lookupAt(lctx, s, linkKey, name, &won)
 			if err != nil {
 				err = fmt.Errorf("%s: %w", s.addr, err)
 			}
@@ -359,6 +362,7 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	for range n.servers {
 		r := <-ch
 		if r.err == nil {
+			won.Store(true)
 			return r.info, nil
 		}
 		n.logf("lookup %q: %v", name, r.err)
@@ -367,26 +371,61 @@ func (n *Node) Lookup(ctx context.Context, linkKey, name string) (*PeerInfo, err
 	return nil, errors.New(strings.Join(errs, "; "))
 }
 
-// lookupAt runs one lookup over s's control connection. Cancelling ctx
-// (because another server answered first) aborts it without touching a
-// healthy control connection.
-func (n *Node) lookupAt(ctx context.Context, s *server, linkKey, name string) (*PeerInfo, error) {
+// openControlStream opens a bidirectional stream on s's control connection.
+// If the cached connection is dead or has exhausted its stream limit without
+// MAX_STREAMS arriving shortly (e.g. against an older server that never
+// released connect streams), it drops that connection and redials once rather
+// than blocking in OpenStreamSync until the caller's deadline expires.
+func (n *Node) openControlStream(ctx context.Context, s *server, won *atomic.Bool) (*quic.Conn, *quic.Stream, error) {
 	ctrl, err := n.control(ctx, s)
+	if err != nil {
+		return nil, nil, err
+	}
+	if st, err := ctrl.OpenStream(); err == nil {
+		return ctrl, st, nil
+	}
+	wctx, wcancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	st, err := ctrl.OpenStreamSync(wctx)
+	wcancel()
+	if err == nil {
+		return ctrl, st, nil
+	}
+	if !won.Load() {
+		n.dropControl(s, ctrl)
+	}
+	if ctx.Err() != nil {
+		return nil, nil, ctx.Err()
+	}
+	ctrl, err = n.control(ctx, s)
+	if err != nil {
+		return nil, nil, err
+	}
+	st, err = ctrl.OpenStreamSync(ctx)
+	if err != nil {
+		if !won.Load() {
+			n.dropControl(s, ctrl)
+		}
+		return nil, nil, err
+	}
+	return ctrl, st, nil
+}
+
+// lookupAt runs one lookup over s's control connection. Cancelling ctx after
+// won is set (because another server answered first) aborts it without
+// touching a healthy control connection; any other failure drops ctrl.
+func (n *Node) lookupAt(ctx context.Context, s *server, linkKey, name string, won *atomic.Bool) (*PeerInfo, error) {
+	ctrl, st, err := n.openControlStream(ctx, s, won)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		st.CancelRead(0)
+		st.Close()
+	}()
 	auth, err := n.authFor(ctrl)
 	if err != nil {
 		return nil, err
 	}
-	st, err := ctrl.OpenStreamSync(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			n.dropControl(s)
-		}
-		return nil, err
-	}
-	defer st.Close()
 	done := make(chan struct{})
 	defer close(done)
 	go func() { // a cancelled lookup must not sit in Read for its deadline
@@ -406,15 +445,22 @@ func (n *Node) lookupAt(ctx context.Context, s *server, linkKey, name string) (*
 		LocalAddrs:  n.LocalCandidates(),
 	})
 	if err != nil {
+		if !won.Load() {
+			n.dropControl(s, ctrl)
+		}
 		return nil, err
 	}
+	st.Close() // send FIN with the request so even older servers see EOF on Read
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {
+		if won.Load() {
+			return nil, ctx.Err()
+		}
+		n.dropControl(s, ctrl)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		n.dropControl(s)
 		return nil, fmt.Errorf("server: %w", err)
 	}
 	switch m.Type {
@@ -597,10 +643,13 @@ func (n *Node) Register(ctx context.Context, addr, linkKey, name string, onIncom
 	}
 	st, err := ctrl.OpenStreamSync(ctx)
 	if err != nil {
-		n.dropControl(s)
+		n.dropControl(s, ctrl)
 		return err
 	}
-	defer st.Close()
+	defer func() {
+		st.CancelRead(0)
+		st.Close()
+	}()
 	err = proto.Write(st, &proto.Message{
 		Type:        proto.TypeRegister,
 		Version:     buildinfo.Version(),
@@ -615,7 +664,7 @@ func (n *Node) Register(ctx context.Context, addr, linkKey, name string, onIncom
 	st.SetReadDeadline(time.Now().Add(10 * time.Second))
 	m, err := proto.Read(st)
 	if err != nil {
-		n.dropControl(s)
+		n.dropControl(s, ctrl)
 		return fmt.Errorf("server: %w", err)
 	}
 	st.SetReadDeadline(time.Time{})
@@ -631,7 +680,7 @@ func (n *Node) Register(ctx context.Context, addr, linkKey, name string, onIncom
 		select {
 		case <-ctx.Done():
 			st.CancelRead(0)
-			n.dropControl(s)
+			n.dropControl(s, ctrl)
 		case <-done:
 		}
 	}()
@@ -639,7 +688,7 @@ func (n *Node) Register(ctx context.Context, addr, linkKey, name string, onIncom
 	for {
 		m, err := proto.Read(st)
 		if err != nil {
-			n.dropControl(s)
+			n.dropControl(s, ctrl)
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -718,7 +767,10 @@ func AuthenticateAsClient(ctx context.Context, conn *quic.Conn, linkKey string) 
 	if err != nil {
 		return fail(err)
 	}
-	defer st.Close()
+	defer func() {
+		st.CancelRead(0)
+		st.Close()
+	}()
 	st.SetDeadline(time.Now().Add(authTimeout))
 	if _, err := fmt.Fprintf(st, "AUTH %s %s\n", mine, buildinfo.Version()); err != nil {
 		return fail(err)
@@ -760,7 +812,10 @@ func AuthenticateAsExporter(ctx context.Context, conn *quic.Conn, linkKey string
 	if err != nil {
 		return fail(err)
 	}
-	defer st.Close()
+	defer func() {
+		st.CancelRead(0)
+		st.Close()
+	}()
 	st.SetDeadline(time.Now().Add(authTimeout))
 	line, err := bufio.NewReader(st).ReadString('\n')
 	if err != nil {
