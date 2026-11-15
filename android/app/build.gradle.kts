@@ -10,6 +10,23 @@ plugins {
 val nativeOut = System.getenv("MSNW_NATIVE_OUT") ?: "/tmp/msnw-wt/native/out"
 val goBin = rootProject.file("../bin")
 
+fun gitVersion(): String = try {
+    val p = ProcessBuilder("git", "describe", "--tags", "--always", "--dirty")
+        .directory(rootProject.file(".."))
+        .redirectErrorStream(true)
+        .start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    if (p.waitFor() == 0 && out.isNotEmpty()) out else "dev"
+} catch (_: Exception) {
+    "dev"
+}
+
+val appVersion = System.getenv("MSNW_VERSION")?.takeIf { it.isNotBlank() } ?: gitVersion()
+val appVersionCode = Regex("""^v?(\d+)\.(\d+)\.(\d+)""").find(appVersion)?.let { m ->
+    val (maj, min, pat) = m.destructured
+    maj.toInt() * 1_000_000 + min.toInt() * 1_000 + pat.toInt()
+} ?: 1
+
 android {
     namespace = "ma.ikeji.msnw"
     compileSdk = 35
@@ -18,8 +35,8 @@ android {
         applicationId = "ma.ikeji.msnw"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = appVersionCode
+        versionName = appVersion
         ndk { abiFilters += listOf("arm64-v8a") }
     }
     // Release signing from the environment (MSNW_KEYSTORE, MSNW_KEYSTORE_PASSWORD,

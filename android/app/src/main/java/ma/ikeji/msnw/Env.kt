@@ -26,6 +26,15 @@ object Env {
     fun logFile(ctx: Context): File = File(ctx.filesDir, "msnw.log")
     fun sshKey(ctx: Context): File = File(home(ctx), ".ssh/id_msnw")
 
+    /** Short version reported by the bundled msnw binary (e.g. "v0.1.15"), or null on failure. Blocking. */
+    fun msnwVersion(ctx: Context): String? = try {
+        val p = ProcessBuilder(msnw(ctx).absolutePath, "version").redirectErrorStream(true).start()
+        val out = p.inputStream.bufferedReader().readText().trim()
+        if (p.waitFor() == 0) out.removePrefix("msnw ").substringBefore(' ').takeIf { it.isNotBlank() } else null
+    } catch (_: Exception) {
+        null
+    }
+
     /** Newline-separated most-recent-first history lists kept in the prefs. */
     fun history(ctx: Context, key: String): List<String> =
         prefs(ctx).getString(key, "")?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()

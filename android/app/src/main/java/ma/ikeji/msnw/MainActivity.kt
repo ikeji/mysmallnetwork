@@ -142,6 +142,7 @@ class MainActivity : AppCompatActivity() {
         setupSettings()
         setupSshKey()
         setupLauncher()
+        setupVersion()
         findViewById<Button>(R.id.tabSettings).setOnClickListener { showSettings() }
         if (!Env.prefs(this).getString("key", "").isNullOrBlank()) {
             MsnwService.start(this)
@@ -895,6 +896,23 @@ class MainActivity : AppCompatActivity() {
                 toast("public key copied")
             }
         }
+    }
+
+    private fun setupVersion() {
+        val v = findViewById<TextView>(R.id.version)
+        val pkg = if (Build.VERSION.SDK_INT >= 33) {
+            packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION") packageManager.getPackageInfo(packageName, 0)
+        }
+        val apkVer = pkg.versionName ?: "dev"
+        v.text = "msnw $apkVer"
+        Thread {
+            val binVer = Env.msnwVersion(this)
+            if (binVer != null && binVer != apkVer) {
+                runOnUiThread { v.text = "msnw $apkVer (bin $binVer)" }
+            }
+        }.start()
     }
 
     private fun refreshLog() {

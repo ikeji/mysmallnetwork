@@ -45,6 +45,7 @@ jobs:
         run: android/native/build.sh fetch protobuf openssl ncurses mosh dropbear sshwrap pack
       - name: Signed APK
         env:
+          MSNW_VERSION: ${{ github.ref_name }}
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           MSNW_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           MSNW_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
