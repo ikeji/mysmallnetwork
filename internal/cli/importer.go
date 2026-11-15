@@ -405,24 +405,43 @@ func (p *pool) tryResume(name string, s *resume.Session) error {
 	return s.Attach(st, rd, peerRecv)
 }
 
+// boolCount is a boolean flag that counts how many times it was set (-v, -v -v).
+type boolCount int
+
+func (c *boolCount) String() string   { return strconv.FormatBool(*c > 0) }
+func (c *boolCount) IsBoolFlag() bool { return true }
+func (c *boolCount) Set(s string) error {
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	if b {
+		*c++
+	} else {
+		*c = 0
+	}
+	return nil
+}
+
 // nodeFlags are the connection options shared by client-side subcommands.
 type nodeFlags struct {
 	servers *serverFlags
 	linkKey *string
 	port    *int
-	verbose *bool
+	verbose boolCount
 	logFile *string
 	logOpen bool
 }
 
 func addNodeFlags(fs *flag.FlagSet) *nodeFlags {
-	return &nodeFlags{
+	nf := &nodeFlags{
 		servers: addServerFlags(fs),
 		linkKey: fs.String("key", os.Getenv("MSNW_KEY"), "link key shared with the exporter (or $MSNW_KEY); required"),
 		port:    fs.Int("port", 0, "local UDP port to bind (0 = random)"),
-		verbose: fs.Bool("v", false, "verbose logging"),
 		logFile: fs.String("log", os.Getenv("MSNW_LOG"), "append log output to this file instead of stderr (or $MSNW_LOG)"),
 	}
+	fs.Var(&nf.verbose, "v", "verbose logging")
+	return nf
 }
 
 // parseWithTrailingFlags parses args allowing flags after positional
@@ -465,7 +484,7 @@ func (nf *nodeFlags) openLog(command string) error {
 		log.SetOutput(f)
 	}
 	nf.logOpen = true
-	if *nf.logFile != "" || *nf.verbose {
+	if *nf.logFile != "" || nf.verbose > 0 {
 		log.Printf("%s starting: %s pid %d", command, buildinfo.String(), os.Getpid())
 	}
 	return nil
@@ -486,7 +505,7 @@ func newPool(nf *nodeFlags) (*pool, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	node.Verbose = *nf.verbose
+	node.Verbose = nf.verbose > 0
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	p := &pool{node: node, linkKey: *nf.linkKey, ctx: ctx, ents: map[string]*entry{}, resuming: map[string]bool{}}
 	go p.watchNetwork(ctx)

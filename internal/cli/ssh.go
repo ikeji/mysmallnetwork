@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/ikeji/mysmallnetwork/internal/netutil"
@@ -20,9 +21,10 @@ func SSH(args []string) {
 	fs := flag.NewFlagSet("msnw ssh", flag.ExitOnError)
 	sshOpts := fs.String("ssh", os.Getenv("MSNW_SSH"), "extra options for ssh (or $MSNW_SSH)")
 	nf := addNodeFlags(fs)
+	addSSHVerboseFlag(fs, nf)
 	fs.Parse(args)
 	if fs.NArg() < 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw ssh -key LINKKEY [-ssh OPTS] [-v] [-log FILE] [user@]NAME[:port] | [user]@NAME@host:port [COMMAND...]")
+		fmt.Fprintln(os.Stderr, "usage: msnw ssh -key LINKKEY [-ssh OPTS] [-v|-vv] [-log FILE] [user@]NAME[:port] | [user]@NAME@host:port [COMMAND...]")
 		os.Exit(2)
 	}
 	dest, command := fs.Arg(0), fs.Args()[1:]
@@ -63,13 +65,32 @@ func SSH(args []string) {
 	}
 }
 
+// addSSHVerboseFlag registers -vv so that "-v" keeps msnw verbose on its own
+// while "-vv" (or "-v -v") passes -v on to ssh as well.
+func addSSHVerboseFlag(fs *flag.FlagSet, nf *nodeFlags) {
+	fs.BoolFunc("vv", "verbose logging for both msnw and ssh", func(s string) error {
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return err
+		}
+		if b {
+			if nf.verbose < 2 {
+				nf.verbose = 2
+			}
+		} else {
+			nf.verbose = 0
+		}
+		return nil
+	})
+}
+
 // sshProxyArgs returns the leading ssh arguments that route the connection
-// through this binary: a ProxyCommand running "msnw connect spec" with the
-// same -v and -log, and -v for ssh itself when verbose. The link key and
+// through this binary: a ProxyCommand running "msnw connect spec" with -v (when
+// verbose) and -log, and -v for ssh itself when -vv is given. The link key and
 // server list go to the child through the environment, so that they do not
-// show up in the command line. Without -v, ssh discards the ProxyCommand's
-// stderr whenever ControlPersist is on, so -v is the way to see why a
-// connection failed.
+// show up in the command line. Without -v on ssh, OpenSSH discards the
+// ProxyCommand's stderr whenever ControlPersist is on, so -vv is the way to see
+// why a connection failed when not using -log.
 func sshProxyArgs(nf *nodeFlags, spec string) ([]string, error) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return nil, fmt.Errorf("ssh not found")
@@ -80,14 +101,14 @@ func sshProxyArgs(nf *nodeFlags, spec string) ([]string, error) {
 	}
 	nf.exportEnv()
 	proxy := fmt.Sprintf("ProxyCommand=%s connect %s", shellQuote(self), shellQuote(spec))
-	if *nf.verbose {
+	if nf.verbose > 0 {
 		proxy += " -v"
 	}
 	if *nf.logFile != "" {
 		proxy += " -log " + shellQuote(*nf.logFile)
 	}
 	args := []string{"-o", proxy}
-	if *nf.verbose {
+	if nf.verbose >= 2 {
 		args = append(args, "-v")
 	}
 	return args, nil

@@ -26,9 +26,10 @@ func Mosh(args []string) {
 	sshOpts := fs.String("ssh", os.Getenv("MSNW_MOSH_SSH"), "extra options for the bootstrap ssh (or $MSNW_MOSH_SSH)")
 	sshTimeout := fs.Duration("ssh-timeout", 60*time.Second, "give up on the bootstrap ssh after this long (0 = never)")
 	nf := addNodeFlags(fs)
+	addSSHVerboseFlag(fs, nf)
 	pos := parseWithTrailingFlags(fs, args)
 	if len(pos) != 1 || *nf.linkKey == "" {
-		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [-ssh OPTS] [-ssh-timeout D] [-v] [-log FILE] [user@]NAME")
+		fmt.Fprintln(os.Stderr, "usage: msnw mosh -key LINKKEY [-p PORT|LO:HI] [-ssh OPTS] [-ssh-timeout D] [-v|-vv] [-log FILE] [user@]NAME")
 		os.Exit(2)
 	}
 	dest := pos[0]

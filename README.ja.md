@@ -107,9 +107,9 @@ msnw ssh user@linuxbox
 
 これは `ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox` を実行する。
 名前の後ろはリモートコマンド(`msnw ssh linuxbox uptime`)。ssh のオプションは
-`-ssh "-A -L 8080:localhost:80"` か `$MSNW_SSH` で渡す。`-v` は msnw と ssh の両方を
-冗長にするので、繋がらない理由を見るにはこれを付ける(ControlPersist が有効だと ssh は
-ProxyCommand のエラーを捨ててしまう)。ホスト名 `linuxbox` は ssh の表示用で、実際の経路は
+`-ssh "-A -L 8080:localhost:80"` か `$MSNW_SSH` で渡す。`-v` は msnw を、`-vv` は
+ssh も冗長にするので、繋がらない理由を標準エラーで見るには `-vv` を付ける(ControlPersist が
+有効だと ssh は ProxyCommand のエラーを捨ててしまう)。ホスト名 `linuxbox` は ssh の表示用で、実際の経路は
 ProxyCommand が作る。素の `ssh` や `scp`、`rsync` から使うなら `~/.ssh/config` に
 書いておくと `ssh linuxbox` だけで済む(`msnw ssh` も `msnw mosh` もこの設定を使う):
 
@@ -450,7 +450,7 @@ msnw mosh user@home                       # -p で mosh のポート範囲を変
 転送してから `mosh-client` を 127.0.0.1 に向けて実行する。ssh に追加オプションを渡すには
 `-ssh "..."` か `MSNW_MOSH_SSH` を使う。リンクキーは環境変数で子プロセスに渡すので
 コマンドラインに出ない。フラグはホスト名の後にも書ける(`msnw mosh user@home -v`)。
-`-v` は ssh にも渡る。
+`-vv` にすると ssh にも `-v` が渡る。
 mosh が端末を占有している間はログが見えないので、`-log FILE`(または `MSNW_LOG`)で
 ファイルに追記する。同一プロセスの転送部分も ssh の ProxyCommand で動く子も、そこに書く。
 

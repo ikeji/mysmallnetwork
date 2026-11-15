@@ -113,10 +113,10 @@ msnw ssh user@linuxbox
 
 This runs `ssh -o ProxyCommand='msnw connect linuxbox' user@linuxbox`.
 Anything after the name is the remote command (`msnw ssh linuxbox uptime`);
-ssh options go in `-ssh "-A -L 8080:localhost:80"` or `$MSNW_SSH`, and `-v`
-makes both msnw and ssh verbose, which is also the way to see why a
-connection failed (ssh hides the ProxyCommand's errors when ControlPersist is
-on). The host name `linuxbox` is only what ssh displays; the ProxyCommand makes
+ssh options go in `-ssh "-A -L 8080:localhost:80"` or `$MSNW_SSH`; `-v` makes
+msnw verbose, and `-vv` makes ssh verbose too, which is the way to see why a
+connection failed on stderr (ssh hides the ProxyCommand's errors when
+ControlPersist is on). The host name `linuxbox` is only what ssh displays; the ProxyCommand makes
 the actual path. To use plain `ssh`, `scp` or `rsync`, put the ProxyCommand in
 `~/.ssh/config` and `ssh linuxbox` is enough (`msnw ssh` and `msnw mosh` use
 the same entry):
@@ -479,7 +479,8 @@ ProxyCommand) bound to 127.0.0.1 only, forwards a local UDP port to the same
 port on the exporter side inside the same process, then runs `mosh-client`
 against 127.0.0.1. Extra ssh options go in `-ssh "..."` or `MSNW_MOSH_SSH`. The
 link key reaches the child process through the environment, not the command
-line. Flags may follow the host (`msnw mosh user@home -v`). While mosh owns
+line. Flags may follow the host (`msnw mosh user@home -v`; `-vv` passes `-v` to
+ssh as well). While mosh owns
 the terminal, log output is invisible, so use `-log FILE` (or `MSNW_LOG`) to
 append it to a file; both the in-process forwarder and the ssh ProxyCommand
 child log there, each starting with a banner line. The bootstrap ssh is given
