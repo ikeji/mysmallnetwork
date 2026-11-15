@@ -9,17 +9,27 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.SweepGradient
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.SystemClock
 import android.text.InputType
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.util.Log
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -46,7 +56,9 @@ import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
 import androidx.webkit.WebViewFeature
 import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.sign
+import kotlin.math.sin
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
@@ -62,7 +74,7 @@ import java.util.concurrent.Executors
  */
 class MainActivity : AppCompatActivity() {
     private sealed class Tab(val button: Button) {
-        class Browser(button: Button, val view: View, val web: WebView, val url: EditText) : Tab(button)
+        class Browser(button: Button, val view: View, val web: WebView, val url: EditText, val willNavigate: () -> Unit) : Tab(button)
         class Term(button: Button, val entry: MsnwService.Entry) : Tab(button)
     }
 
@@ -276,6 +288,151 @@ class MainActivity : AppCompatActivity() {
     private fun webLabel(u: String?): String =
         u?.let { Uri.parse(it).host }?.takeIf { it.isNotBlank() }?.take(12) ?: "B"
 
+    /**
+     * Flashy loading overlay for a browser tab: a flowing neon rainbow progress bar
+     * along the top edge plus a centered HUD card with counter-rotating neon rings.
+     * Non-clickable so touches pass straight through to the WebView underneath.
+     */
+    private inner class BrowserLoader : View(this@MainActivity) {
+        private val d = resources.displayMetrics.density
+        private val matrix = Matrix()
+        private val rect = RectF()
+        private val trackPaint = Paint().apply { color = 0xbb111111.toInt() }
+        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val sparkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        private val cardPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xe010141f.toInt() }
+        private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 7 * d }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * d }
+        private val arcPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+        private val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff00e676.toInt() }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textAlign = Paint.Align.CENTER
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 14f, resources.displayMetrics)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        private var barShader: LinearGradient? = null
+        private val sweepShader = SweepGradient(
+            0f, 0f,
+            intArrayOf(0xff00e5ff.toInt(), 0xffff4081.toInt(), 0xffffea00.toInt(), 0xff00e676.toInt(), 0xff00e5ff.toInt()),
+            null
+        )
+
+        var active = false
+            private set
+        var progress = 0
+            private set
+        private var shown = 0f
+
+        init {
+            visibility = GONE
+            borderPaint.shader = sweepShader
+            haloPaint.shader = sweepShader
+            haloPaint.alpha = 80
+        }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            if (w > 0) {
+                barShader = LinearGradient(
+                    0f, 0f, w.toFloat(), 0f,
+                    intArrayOf(
+                        0xff00e5ff.toInt(), 0xff00e676.toInt(), 0xffffea00.toInt(),
+                        0xffff4081.toInt(), 0xffd500f9.toInt(), 0xff00e5ff.toInt()
+                    ),
+                    null, Shader.TileMode.REPEAT
+                )
+                barPaint.shader = barShader
+                glowPaint.shader = barShader
+                glowPaint.alpha = 95
+            }
+        }
+
+        fun start(p: Int) {
+            if (!active) {
+                active = true
+                shown = p.toFloat()
+                animate().cancel()
+                alpha = 1f
+                visibility = VISIBLE
+            }
+            progress = p
+            invalidate()
+        }
+
+        fun finish(immediate: Boolean = false) {
+            if (!active) return
+            active = false
+            progress = 100
+            if (immediate) {
+                animate().cancel()
+                visibility = GONE
+                shown = 0f
+            } else {
+                shown = 100f
+                invalidate()
+                animate().alpha(0f).setDuration(250).withEndAction {
+                    if (!active) { visibility = GONE; shown = 0f }
+                }.start()
+            }
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+            val t = SystemClock.uptimeMillis() / 1000f
+
+            val target = if (active) maxOf(progress.toFloat(), 12f) else 100f
+            shown += (target - shown) * 0.2f
+
+            val barH = 7 * d
+            val fillW = (w * (shown / 100f)).coerceIn(0f, w)
+            canvas.drawRect(0f, 0f, w, barH, trackPaint)
+            barShader?.let {
+                matrix.setTranslate((t * w * 0.9f) % w, 0f)
+                it.setLocalMatrix(matrix)
+            }
+            canvas.drawRect(0f, barH, fillW, barH + 14 * d, glowPaint)
+            canvas.drawRect(0f, 0f, fillW, barH, barPaint)
+            val pulse = 0.7f + 0.3f * sin(t * 10f)
+            sparkPaint.alpha = (220 * pulse).toInt()
+            canvas.drawCircle(fillW, barH / 2f, 5 * d * pulse, sparkPaint)
+
+            if (h >= 120 * d) {
+                val cx = w / 2f
+                val cy = h / 2f
+                val cw = 172 * d
+                val ch = 148 * d
+                val cr = 22 * d
+                rect.set(cx - cw / 2f, cy - ch / 2f, cx + cw / 2f, cy + ch / 2f)
+                matrix.setRotate((t * 180f) % 360f)
+                matrix.postTranslate(cx, cy)
+                sweepShader.setLocalMatrix(matrix)
+                canvas.drawRoundRect(rect, cr, cr, cardPaint)
+                canvas.drawRoundRect(rect, cr, cr, haloPaint)
+                canvas.drawRoundRect(rect, cr, cr, borderPaint)
+
+                val ry = cy - 16 * d
+                fun arc(radius: Float, stroke: Float, color: Int, start: Float, sweep: Float) {
+                    arcPaint.strokeWidth = stroke
+                    arcPaint.color = color
+                    rect.set(cx - radius, ry - radius, cx + radius, ry + radius)
+                    canvas.drawArc(rect, start, sweep, false, arcPaint)
+                }
+                arc(33 * d, 4.5f * d, 0xff00e5ff.toInt(), (t * 240f) % 360f, 210f + 40f * sin(t * 4f))
+                arc(24 * d, 4f * d, 0xffff4081.toInt(), (-t * 330f) % 360f, 170f + 40f * cos(t * 5f))
+                arc(15 * d, 3.5f * d, 0xffffea00.toInt(), (t * 450f) % 360f, 120f)
+                canvas.drawCircle(cx, ry, (4.5f + 1.5f * sin(t * 8f)) * d, corePaint)
+
+                val label = if (progress < 15 && active) "CONNECTING..." else "LOADING ${progress}%"
+                canvas.drawText(label, cx, cy + 48 * d, textPaint)
+            }
+
+            if (visibility == VISIBLE) postInvalidateOnAnimation()
+        }
+    }
+
     private fun newBrowserTab(initialUrl: String): Tab.Browser {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setBackgroundColor(Color.parseColor("#333333")) }
@@ -288,6 +445,7 @@ class MainActivity : AppCompatActivity() {
         }
         val go = Button(this).apply { text = "Go" }
         val reload = Button(this).apply { text = "↻" }
+        val reloadIdleColor = reload.currentTextColor
         val star = Button(this).apply { text = "☆" } // bookmark: add the current page to the list
         bar.addView(url, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(go)
@@ -298,22 +456,57 @@ class MainActivity : AppCompatActivity() {
         web.settings.domStorageEnabled = true
         web.settings.useWideViewPort = true
         web.settings.loadWithOverviewMode = true
+        val loader = BrowserLoader()
+        val webBox = FrameLayout(this).apply {
+            addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(loader, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
         column.addView(bar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        column.addView(web, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        column.addView(webBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
+        var pageLabel = webLabel(initialUrl)
+        var stopping = false
         lateinit var tab: Tab.Browser
-        val button = makeTabButton(webLabel(initialUrl)) { tab }
-        tab = Tab.Browser(button, column, web, url)
+        val button = makeTabButton(pageLabel) { tab }
+        fun syncUi() {
+            button.text = if (loader.active) "⏳ $pageLabel" else pageLabel
+            reload.text = if (loader.active) "✕" else "↻"
+            reload.setTextColor(if (loader.active) Color.parseColor("#ff6b81") else reloadIdleColor)
+        }
+        fun setLoading(loading: Boolean, progress: Int = 0, immediate: Boolean = false) {
+            if (loading) loader.start(progress) else loader.finish(immediate)
+            syncUi()
+        }
+        tab = Tab.Browser(button, column, web, url) { stopping = false; setLoading(true, 5) }
         tabs.add(tab)
         web.webViewClient = object : WebViewClient() {
             // Label: the host name until the page reports a title (onReceivedTitle below).
-            override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) { button.text = webLabel(u) }
-            override fun onPageFinished(view: WebView?, u: String?) { url.setText(u ?: "") }
+            override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) {
+                stopping = false
+                pageLabel = webLabel(u)
+                setLoading(true, if (loader.active) maxOf(loader.progress, 10) else 10)
+            }
+            override fun onPageFinished(view: WebView?, u: String?) {
+                url.setText(u ?: "")
+                stopping = false
+                setLoading(false)
+            }
         }
         web.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
-                if (!title.isNullOrBlank()) button.text = title.take(12)
+                if (!title.isNullOrBlank()) {
+                    pageLabel = title.take(12)
+                    syncUi()
+                }
+            }
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (newProgress >= 100) {
+                    stopping = false
+                    setLoading(false)
+                } else if (!stopping) {
+                    setLoading(true, newProgress)
+                }
             }
         }
         val navigate = {
@@ -321,12 +514,24 @@ class MainActivity : AppCompatActivity() {
             if (u.isNotEmpty()) {
                 if (!u.contains("://")) u = "http://$u"
                 Env.addHistory(this, URL_HISTORY, u)
+                stopping = false
+                setLoading(true, 5)
                 web.loadUrl(u)
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
             }
         }
         go.setOnClickListener { navigate() }
-        reload.setOnClickListener { web.reload() }
+        reload.setOnClickListener {
+            if (loader.active) {
+                stopping = true
+                web.stopLoading()
+                setLoading(false, immediate = true)
+            } else {
+                stopping = false
+                setLoading(true, 5)
+                web.reload()
+            }
+        }
         star.setOnClickListener {
             val u = web.url ?: ""
             if (u.isNotBlank() && u != "about:blank") { Env.addHistory(this, URL_HISTORY, u); toast("bookmarked") }
@@ -339,7 +544,7 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val c = current
-        if (c is Tab.Browser && c.web.canGoBack()) c.web.goBack()
+        if (c is Tab.Browser && c.web.canGoBack()) { c.willNavigate(); c.web.goBack() }
         else @Suppress("DEPRECATION") super.onBackPressed()
     }
 
