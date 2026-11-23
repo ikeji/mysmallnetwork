@@ -40,6 +40,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebViewDatabase
@@ -69,6 +70,8 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
@@ -110,6 +113,8 @@ class MainActivity : AppCompatActivity() {
     private var svc: MsnwService? = null
     private var bound = false
     private val pending = mutableListOf<(MsnwService) -> Unit>()
+    private var proxyReady = false
+    private val onProxyReady = mutableListOf<() -> Unit>()
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             val s = (binder as MsnwService.LocalBinder).service
@@ -169,6 +174,53 @@ class MainActivity : AppCompatActivity() {
             bind()
         }
         showSettings() // the "+" screen: open tabs from history or by typing
+        if (savedInstanceState == null) handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** Rewrites an msnw:// URI to http://; returns null if not a valid msnw:// URI. */
+    private fun msnwToHttp(uri: Uri?): String? {
+        if (uri == null || !uri.scheme.equals("msnw", ignoreCase = true) || uri.host.isNullOrBlank()) return null
+        return uri.buildUpon().scheme("http").build().toString()
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val httpUrl = msnwToHttp(intent.data) ?: return
+        if (Env.prefs(this).getString("key", "").isNullOrBlank()) {
+            toast("Set the link key first")
+            showSettings()
+            return
+        }
+        val open = {
+            Thread {
+                waitForProxy()
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) select(newBrowserTab(httpUrl))
+                }
+            }.start()
+        }
+        if (proxyReady) open() else onProxyReady += open
+    }
+
+    /** Waits briefly for the local HTTP proxy to start listening (cold-start intents). */
+    private fun waitForProxy(timeoutMs: Long = 3000L) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMs
+        while (SystemClock.uptimeMillis() < deadline) {
+            try {
+                Socket().use { s ->
+                    s.connect(InetSocketAddress("127.0.0.1", MsnwService.PROXY_PORT), 200)
+                }
+                return
+            } catch (_: Exception) {
+                try { Thread.sleep(50) } catch (_: InterruptedException) { return }
+            }
+        }
     }
 
     // ---- "+" screen: open web / mosh tabs ------------------------------------
@@ -179,7 +231,8 @@ class MainActivity : AppCompatActivity() {
             val u = urlEdit.text.toString().trim()
             if (u.isNotEmpty()) {
                 urlEdit.setText("")
-                select(newBrowserTab(if (u.contains("://")) u else "http://$u"))
+                val target = msnwToHttp(Uri.parse(u)) ?: if (u.contains("://")) u else "http://$u"
+                select(newBrowserTab(target))
             }
         }
         findViewById<Button>(R.id.openUrlBtn).setOnClickListener { openUrl() }
@@ -301,8 +354,14 @@ class MainActivity : AppCompatActivity() {
                 .build()
             ProxyController.getInstance().setProxyOverride(config, Executors.newSingleThreadExecutor()) {
                 Log.i(MsnwService.TAG, "webview proxy set")
+                runOnUiThread {
+                    proxyReady = true
+                    onProxyReady.forEach { it() }
+                    onProxyReady.clear()
+                }
             }
         } else {
+            proxyReady = true
             toast("This WebView cannot use a proxy; update Android System WebView")
         }
     }
@@ -493,6 +552,15 @@ class MainActivity : AppCompatActivity() {
             syncUi()
         }
         val webClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                if (view !== web) return false
+                val httpUrl = msnwToHttp(request?.url) ?: return false
+                url.setText(httpUrl)
+                stopping = false
+                setLoading(true, 5)
+                web.loadUrl(httpUrl)
+                return true
+            }
             // Label: the host name until the page reports a title (onReceivedTitle below).
             override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) {
                 if (view !== web) return
@@ -547,7 +615,7 @@ class MainActivity : AppCompatActivity() {
         val navigate = {
             var u = url.text.toString().trim()
             if (u.isNotEmpty()) {
-                if (!u.contains("://")) u = "http://$u"
+                u = msnwToHttp(Uri.parse(u)) ?: if (u.contains("://")) u else "http://$u"
                 Env.addHistory(this, URL_HISTORY, u)
                 pendingReload = false
                 stopping = false
