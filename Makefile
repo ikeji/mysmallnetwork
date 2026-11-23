@@ -6,7 +6,7 @@ export CGO_ENABLED := 0
 
 NATSIM_MODES := cone fullcone symmetric cone:fullcone fullcone:cone cone:symmetric symmetric:cone fullcone:symmetric symmetric:fullcone
 
-.PHONY: all test unit natsim roam clean cross android android-release FORCE
+.PHONY: all test unit natsim roam clean cross android android-release android-test FORCE
 
 all: bin/msnw
 
@@ -61,6 +61,10 @@ android: cross
 android-release: cross
 	set -a; [ -f ~/.config/msnw/signing.env ] && . ~/.config/msnw/signing.env; set +a; \
 	cd android && MSNW_VERSION="$(VERSION)" ./gradlew --no-daemon -q assembleRelease && ls -la app/build/outputs/apk/release/app-release.apk
+
+# Instrumented Android integration tests (uses an attached device or headless AVD "msnw").
+android-test: cross
+	chmod +x test/android-test.sh && test/android-test.sh
 
 clean:
 	rm -rf bin

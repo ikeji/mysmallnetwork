@@ -70,6 +70,8 @@
                 <Button android:id="@+id/copyKey" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Copy"/>
             </LinearLayout>
             <TextView android:id="@+id/pubKey" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#7fd1ff" android:typeface="monospace" android:textSize="11sp" android:textIsSelectable="true"/>
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:text="Browser" android:textColor="#cccccc"/>
+            <Button android:id="@+id/clearHttpAuth" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Clear saved HTTP passwords"/>
             <TextView android:id="@+id/log" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="16dp" android:textColor="#9c9" android:typeface="monospace" android:textSize="11sp"/>
         </LinearLayout>
     </ScrollView>

@@ -35,11 +35,14 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -48,12 +51,15 @@ import android.widget.PopupMenu
 import android.widget.PopupWindow
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.webkit.ProfileStore
 import androidx.webkit.ProxyConfig
 import androidx.webkit.ProxyController
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import kotlin.math.abs
 import kotlin.math.cos
@@ -63,6 +69,9 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.Executors
 
 /**
@@ -74,12 +83,22 @@ import java.util.concurrent.Executors
  */
 class MainActivity : AppCompatActivity() {
     private sealed class Tab(val button: Button) {
-        class Browser(button: Button, val view: View, val web: WebView, val url: EditText, val willNavigate: () -> Unit) : Tab(button)
+        class Browser(
+            button: Button,
+            val view: View,
+            var web: WebView,
+            val url: EditText,
+            val willNavigate: () -> Unit,
+            val reloadIfPending: () -> Unit,
+            val resetProfile: () -> Unit
+        ) : Tab(button)
         class Term(button: Button, val entry: MsnwService.Entry) : Tab(button)
     }
 
     private val tabs = mutableListOf<Tab>()
     private var current: Tab? = null
+    internal var activeAuthDialog: AlertDialog? = null
+    internal fun currentBrowserWebView(): WebView? = (current as? Tab.Browser)?.web
 
     private lateinit var strip: LinearLayout
     private lateinit var content: FrameLayout
@@ -137,6 +156,7 @@ class MainActivity : AppCompatActivity() {
         }
         strip = findViewById(R.id.tabs)
         content = findViewById(R.id.content)
+        cleanupOldWebProfiles()
         setupProxy()
         setupTerminal()
         setupSettings()
@@ -236,7 +256,9 @@ class MainActivity : AppCompatActivity() {
             it.button.setTextColor(if (it === tab) Color.parseColor("#7fd1ff") else Color.WHITE)
             if (it is Tab.Browser) it.view.visibility = if (it === tab) View.VISIBLE else View.GONE
         }
-        if (tab is Tab.Term) {
+        if (tab is Tab.Browser) {
+            tab.reloadIfPending()
+        } else if (tab is Tab.Term) {
             term.attachSession(tab.entry.session)
             showKeyboard()
         }
@@ -452,22 +474,13 @@ class MainActivity : AppCompatActivity() {
         bar.addView(go)
         bar.addView(reload)
         bar.addView(star)
-        val web = WebView(this)
-        web.settings.javaScriptEnabled = true
-        web.settings.domStorageEnabled = true
-        web.settings.useWideViewPort = true
-        web.settings.loadWithOverviewMode = true
-        val loader = BrowserLoader()
-        val webBox = FrameLayout(this).apply {
-            addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(loader, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        }
-        column.addView(bar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        column.addView(webBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-        content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
+        val loader = BrowserLoader()
+        val webBox = FrameLayout(this)
         var pageLabel = webLabel(initialUrl)
         var stopping = false
+        var pendingReload = false
+        lateinit var web: WebView
         lateinit var tab: Tab.Browser
         val button = makeTabButton(pageLabel) { tab }
         fun syncUi() {
@@ -479,29 +492,43 @@ class MainActivity : AppCompatActivity() {
             if (loading) loader.start(progress) else loader.finish(immediate)
             syncUi()
         }
-        tab = Tab.Browser(button, column, web, url) { stopping = false; setLoading(true, 5) }
-        tabs.add(tab)
-        web.webViewClient = object : WebViewClient() {
+        val webClient = object : WebViewClient() {
             // Label: the host name until the page reports a title (onReceivedTitle below).
             override fun onPageStarted(view: WebView?, u: String?, favicon: Bitmap?) {
+                if (view !== web) return
                 stopping = false
                 pageLabel = webLabel(u)
                 setLoading(true, if (loader.active) maxOf(loader.progress, 10) else 10)
             }
             override fun onPageFinished(view: WebView?, u: String?) {
+                if (view !== web) return
                 url.setText(u ?: "")
                 stopping = false
                 setLoading(false)
             }
+            override fun onReceivedHttpAuthRequest(view: WebView?, handler: HttpAuthHandler?, host: String?, realm: String?) {
+                if (view !== web || handler == null || host == null) {
+                    handler?.cancel()
+                    return
+                }
+                val wasLoading = loader.active
+                promptHttpAuth(
+                    handler, host, realm,
+                    onDialogShown = { if (wasLoading) setLoading(false, immediate = true) },
+                    onProceed = { if (wasLoading && !stopping) setLoading(true, 15) }
+                )
+            }
         }
-        web.webChromeClient = object : WebChromeClient() {
+        val chromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
+                if (view !== web) return
                 if (!title.isNullOrBlank()) {
                     pageLabel = title.take(12)
                     syncUi()
                 }
             }
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (view !== web) return
                 if (newProgress >= 100) {
                     stopping = false
                     setLoading(false)
@@ -510,23 +537,54 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        web = buildWebView(webClient, chromeClient)
+        webBox.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        webBox.addView(loader, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        column.addView(bar, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        column.addView(webBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        content.addView(column, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
         val navigate = {
             var u = url.text.toString().trim()
             if (u.isNotEmpty()) {
                 if (!u.contains("://")) u = "http://$u"
                 Env.addHistory(this, URL_HISTORY, u)
+                pendingReload = false
                 stopping = false
                 setLoading(true, 5)
                 web.loadUrl(u)
                 (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(url.windowToken, 0)
             }
         }
+        val resetProfile = {
+            val prevUrl = web.url?.takeIf { it != "about:blank" } ?: url.text.toString().trim()
+            stopping = true
+            setLoading(false, immediate = true)
+            val old = web
+            webBox.removeView(old)
+            old.stopLoading()
+            old.destroy()
+            web = buildWebView(webClient, chromeClient)
+            tab.web = web
+            webBox.addView(web, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            url.setText(prevUrl)
+            pendingReload = prevUrl.isNotBlank()
+        }
+        tab = Tab.Browser(
+            button, column, web, url,
+            willNavigate = { stopping = false; setLoading(true, 5) },
+            reloadIfPending = { if (pendingReload) navigate() },
+            resetProfile = resetProfile
+        )
+        tabs.add(tab)
         go.setOnClickListener { navigate() }
         reload.setOnClickListener {
             if (loader.active) {
                 stopping = true
                 web.stopLoading()
                 setLoading(false, immediate = true)
+            } else if (pendingReload || web.url.isNullOrBlank()) {
+                navigate()
             } else {
                 stopping = false
                 setLoading(true, 5)
@@ -540,6 +598,172 @@ class MainActivity : AppCompatActivity() {
         url.setOnEditorActionListener { _, id, _ -> if (id == EditorInfo.IME_ACTION_GO) { navigate(); true } else false }
         if (initialUrl.isNotBlank()) { url.setText(initialUrl); navigate() }
         return tab
+    }
+
+    private fun currentWebProfile(): String =
+        "msnw_${Env.prefs(this).getInt("web_profile_seq", 1)}"
+
+    private fun buildWebView(client: WebViewClient, chrome: WebChromeClient): WebView {
+        val web = WebView(this)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            WebViewCompat.setProfile(web, currentWebProfile())
+        }
+        web.settings.javaScriptEnabled = true
+        web.settings.domStorageEnabled = true
+        web.settings.useWideViewPort = true
+        web.settings.loadWithOverviewMode = true
+        web.webViewClient = client
+        web.webChromeClient = chrome
+        return web
+    }
+
+    private fun cleanupOldWebProfiles() {
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) return
+        val active = currentWebProfile()
+        val store = ProfileStore.getInstance()
+        store.allProfileNames.filter { it.startsWith("msnw_") && it != active }.forEach {
+            try { store.deleteProfile(it) } catch (_: Exception) {}
+        }
+    }
+
+    private fun httpAuthPrefs() = getSharedPreferences("msnw_http_auth", Context.MODE_PRIVATE)
+
+    /**
+     * Handles HTTP Basic/Digest auth challenges for WebView (whose default is
+     * handler.cancel()). Reuses stored credentials on the first attempt for a
+     * request and falls back to a username/password dialog if none are saved or
+     * the server rejected them.
+     */
+    private fun promptHttpAuth(
+        handler: HttpAuthHandler,
+        host: String,
+        realm: String?,
+        onDialogShown: () -> Unit,
+        onProceed: () -> Unit
+    ) {
+        val prefs = httpAuthPrefs()
+        val r = realm ?: ""
+        val uk = "u:$host\n$r"
+        val pk = "p:$host\n$r"
+        val savedUser = prefs.getString(uk, null)
+        val savedPass = prefs.getString(pk, null)
+        if (handler.useHttpAuthUsernamePassword() && prefs.contains(uk) && savedUser != null && savedPass != null) {
+            handler.proceed(savedUser, savedPass)
+            return
+        }
+        if (isFinishing || isDestroyed) {
+            handler.cancel()
+            return
+        }
+        onDialogShown()
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val user = EditText(this).apply {
+            hint = "Username"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            imeOptions = EditorInfo.IME_ACTION_NEXT
+            isSingleLine = true
+            if (!savedUser.isNullOrEmpty()) setText(savedUser)
+        }
+        val pass = EditText(this).apply {
+            hint = "Password"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            isSingleLine = true
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+            addView(user)
+            addView(pass)
+        }
+        var handled = false
+        fun submit(dialog: AlertDialog) {
+            if (handled) return
+            handled = true
+            val u = user.text.toString()
+            val p = pass.text.toString()
+            prefs.edit().putString(uk, u).putString(pk, p).apply()
+            onProceed()
+            handler.proceed(u, p)
+            dialog.dismiss()
+        }
+        val displayRealm = decodeRealm(r)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Sign in")
+            .setMessage(if (displayRealm.isBlank()) host else "$host ($displayRealm)")
+            .setView(form)
+            .setPositiveButton("Sign in") { d, _ -> submit(d as AlertDialog) }
+            .setNegativeButton("Cancel") { _, _ -> handled = true; handler.cancel() }
+            .setOnDismissListener {
+                if (activeAuthDialog === it) activeAuthDialog = null
+                if (!handled) { handled = true; handler.cancel() }
+            }
+            .create()
+        pass.setOnEditorActionListener { _, id, _ ->
+            if (id == EditorInfo.IME_ACTION_DONE) { submit(dialog); true } else false
+        }
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        activeAuthDialog = dialog
+        dialog.show()
+        (if (user.text.isNullOrEmpty()) user else pass).requestFocus()
+    }
+
+    /**
+     * Chromium decodes unlabelled WWW-Authenticate realm bytes as windows-1252
+     * (mapping 0x80..0x9F to punctuation like U+2020 '†' or U+201D '”' and
+     * leaving 0x81/0x8D/0x8F/0x90/0x9D as C1 controls). Recover all 0x00..0xFF
+     * bytes losslessly and decode as UTF-8 (or Shift_JIS / EUC-JP).
+     */
+    private fun decodeRealm(s: String): String {
+        if (s.all { it.code < 0x80 }) return s
+        val raw = ByteArray(s.length)
+        for (i in s.indices) {
+            val b = cp1252Byte(s[i].code) ?: return s
+            raw[i] = b
+        }
+        for (name in listOf("UTF-8", "Windows-31J", "EUC-JP")) {
+            try {
+                return Charset.forName(name).newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(raw))
+                    .toString()
+            } catch (_: Exception) {
+            }
+        }
+        return s
+    }
+
+    private fun cp1252Byte(code: Int): Byte? = when (code) {
+        in 0x00..0xFF -> code.toByte()
+        0x20AC -> 0x80.toByte()
+        0x201A -> 0x82.toByte()
+        0x0192 -> 0x83.toByte()
+        0x201E -> 0x84.toByte()
+        0x2026 -> 0x85.toByte()
+        0x2020 -> 0x86.toByte()
+        0x2021 -> 0x87.toByte()
+        0x02C6 -> 0x88.toByte()
+        0x2030 -> 0x89.toByte()
+        0x0160 -> 0x8A.toByte()
+        0x2039 -> 0x8B.toByte()
+        0x0152 -> 0x8C.toByte()
+        0x017D -> 0x8E.toByte()
+        0x2018 -> 0x91.toByte()
+        0x2019 -> 0x92.toByte()
+        0x201C -> 0x93.toByte()
+        0x201D -> 0x94.toByte()
+        0x2022 -> 0x95.toByte()
+        0x2013 -> 0x96.toByte()
+        0x2014 -> 0x97.toByte()
+        0x02DC -> 0x98.toByte()
+        0x2122 -> 0x99.toByte()
+        0x0161 -> 0x9A.toByte()
+        0x203A -> 0x9B.toByte()
+        0x0153 -> 0x9C.toByte()
+        0x017E -> 0x9E.toByte()
+        0x0178 -> 0x9F.toByte()
+        else -> null
     }
 
     @Deprecated("Deprecated in Java")
@@ -878,6 +1102,14 @@ class MainActivity : AppCompatActivity() {
             bind()
             toast("saved")
         }
+        findViewById<Button>(R.id.clearHttpAuth).setOnClickListener {
+            httpAuthPrefs().edit().clear().commit()
+            WebViewDatabase.getInstance(this).clearHttpAuthUsernamePassword()
+            p.edit().putInt("web_profile_seq", p.getInt("web_profile_seq", 1) + 1).commit()
+            tabs.filterIsInstance<Tab.Browser>().forEach { it.resetProfile() }
+            window.decorView.post { cleanupOldWebProfiles() }
+            toast("cleared saved HTTP passwords")
+        }
     }
 
     private fun setupSshKey() {
@@ -928,6 +1160,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        activeAuthDialog?.dismiss()
+        activeAuthDialog = null
+        tabs.filterIsInstance<Tab.Browser>().forEach { it.web.destroy() }
         // Sessions belong to the service and keep running; just stop receiving events.
         svc?.let { if (it.listener === sessionClient) it.listener = null }
         if (bound) unbindService(connection)

@@ -27,6 +27,8 @@ val appVersionCode = Regex("""^v?(\d+)\.(\d+)\.(\d+)""").find(appVersion)?.let {
     maj.toInt() * 1_000_000 + min.toInt() * 1_000 + pat.toInt()
 } ?: 1
 
+val debugJniLibs = layout.buildDirectory.dir("debugJniLibs")
+
 android {
     namespace = "ma.ikeji.msnw"
     compileSdk = 35
@@ -37,7 +39,7 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersion
-        ndk { abiFilters += listOf("arm64-v8a") }
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     // Release signing from the environment (MSNW_KEYSTORE, MSNW_KEYSTORE_PASSWORD,
     // MSNW_KEY_ALIAS, MSNW_KEY_PASSWORD); without it, releases use the debug key.
@@ -51,9 +53,18 @@ android {
         }
     }
     buildTypes {
+        debug {
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        }
         release {
             isMinifyEnabled = false
+            ndk { abiFilters += listOf("arm64-v8a") }
             signingConfig = if (ks != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
+    }
+    sourceSets {
+        getByName("debug") {
+            jniLibs.srcDir(debugJniLibs)
         }
     }
     packaging {
@@ -80,15 +91,22 @@ val copyNative by tasks.registering(Copy::class) {
         }
     }
 }
+val copyDebugX86Native by tasks.registering(Copy::class) {
+    description = "Copies the x86_64 Go binary into debug jniLibs for emulator testing"
+    from(goBin.resolve("linux-amd64/msnw")) { rename { "libmsnw.so" } }
+    into(debugJniLibs.map { it.dir("x86_64") })
+}
 val copyTerminfo by tasks.registering(Copy::class) {
     from(file("$nativeOut/arm64-v8a/terminfo"))
     into(layout.projectDirectory.dir("src/main/assets/terminfo"))
 }
-tasks.named("preBuild") { dependsOn(copyNative, copyTerminfo) }
+tasks.named("preBuild") { dependsOn(copyNative, copyDebugX86Native, copyTerminfo) }
 
 dependencies {
     implementation(project(":terminal-view"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.webkit:webkit:1.12.1")
+    androidTestImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
